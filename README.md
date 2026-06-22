@@ -5,6 +5,15 @@ Portable store, resource, and handler runtime for Async packages.
 Flow is useful when an app needs signal-like state, event handlers, async
 resources, and small workflow helpers without adopting a full statechart engine.
 
+Pick the smallest layer that solves the problem:
+
+- L1 primitives: use `createSignal`, `createComputed`, `createResource`, and
+  `createStore` when an adapter or library needs explicit refs and controllers.
+- L2 Flow: use `flow(...)` when state changes should run through named events
+  and batched handlers.
+- L3 helpers: use `compose(...)`, `status(...)`, `transition(...)`, and guards
+  when a workflow benefits from reusable steps and finite status helpers.
+
 ## Install
 
 ```bash
@@ -172,9 +181,12 @@ const checkout = flow({
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
-      async (_store, input) => submitOrder(input.form),
-      (store, _input, order) => {
-        store.orderId = order.id;
+      async (_store, input) => {
+        const order = await submitOrder(input.form);
+        return order.id;
+      },
+      (store, _input, orderId) => {
+        store.orderId = orderId;
       },
       set("loading", false)
     ])
@@ -250,6 +262,8 @@ The old `@async/flow/run` subpath is not public. Use
 ## Docs
 
 - [Docs Index](docs/README.md)
+- [Layer Guide](docs/layers.md)
+- [Signals, Computed, Resources, And Store](docs/state-and-store.md)
 - [Resource Lifecycle](docs/resources.md)
 - [Compose And Status Helpers](docs/compose-and-status.md)
 

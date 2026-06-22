@@ -5,6 +5,10 @@ resources, and ordered handler steps.
 
 Use these docs when the README is too compact:
 
+- [Layer Guide](layers.md): L1 primitives, L2 Flow events, and L3 workflow
+  helpers.
+- [Signals, Computed, Resources, And Store](state-and-store.md): direct refs,
+  computed values, resource controllers, and store unwrapping.
 - [Resource Lifecycle](resources.md): lazy and immediate resources, load,
   reload, cancel, cache writes, and snapshots.
 - [Compose And Status Helpers](compose-and-status.md): `compose`, `set`,
@@ -15,12 +19,13 @@ Use these docs when the README is too compact:
 
 The package has three public layers:
 
-- Authoring helpers from `@async/flow`.
-- Explicit declaration helpers from `@async/flow/define`.
-- Live runtime constructors from `@async/flow/runtime`.
+- L1 live primitives and store constructors from `@async/flow/runtime`.
+- L2 import-safe declarations from `@async/flow/define` and live Flow instances
+  from top-level `flow(...)`.
+- L3 workflow helpers such as `compose`, `set`, `transition`, and `guard`.
 
 ```js
-import { flow, resource, status } from "@async/flow";
+import { compose, flow, resource, status, transition } from "@async/flow";
 import { defineFlow, defineResource } from "@async/flow/define";
 import { createFlow, createResource, createStore } from "@async/flow/runtime";
 ```

@@ -24,9 +24,12 @@ const checkout = flow({
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
-      async (_store, input) => submitOrder(input.form),
-      (store, _input, order) => {
-        store.orderId = order.id;
+      async (_store, input) => {
+        const order = await submitOrder(input.form);
+        return order.id;
+      },
+      (store, _input, orderId) => {
+        store.orderId = orderId;
       },
       set("loading", false)
     ])
@@ -118,6 +121,9 @@ onError(
 ```
 
 Plain object handler results are applied as store updates by Flow dispatch.
+When a composed step returns a plain object as service data instead of store
+updates, map it to a primitive or write it into the store before the composed
+handler finishes.
 
 ## Status Helpers
 
