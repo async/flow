@@ -1,29 +1,33 @@
 export {
   defineFlow,
   defineSignal,
-  defineState,
+  defineStatus,
   defineComputed,
-  defineAsyncSignal,
+  SIGNAL,
+  STATUS,
+  COMPUTED,
+  RESOURCE,
+  RESOURCE_IMMEDIATE,
   defineSignal as signal,
   defineComputed as computed,
-  defineAsyncSignal as asyncSignal
+  defineStatus as status
 } from "./define.js";
 export {
   createFlow,
+  createStore,
   createSignal,
-  createComputed,
-  createAsyncSignal
+  createStatus,
+  createComputed
 } from "./runtime.js";
 export {
-  run,
+  compose,
   isPromiseLike
-} from "./run.js";
+} from "./compose.js";
 export {
   set,
   update,
   when,
   onError,
-  state,
   guard,
   transition,
   can,
@@ -36,4 +40,5 @@ export {
   resetDefaultScheduler,
   setDefaultScheduler
 } from "./scheduler.js";
-export function flow(config: unknown, options?: unknown): import("./runtime.js").FlowInstance;
+export function flow(config: unknown): import("./runtime.js").FlowInstance;
+export function flow(options: unknown, config: unknown): import("./runtime.js").FlowInstance;

@@ -3,29 +3,34 @@ import { createFlow } from "./runtime.js";
 export {
   defineFlow,
   defineSignal,
-  defineState,
+  defineStatus,
   defineComputed,
-  defineAsyncSignal,
+  SIGNAL,
+  STATUS,
+  COMPUTED,
+  RESOURCE,
+  RESOURCE_IMMEDIATE,
   defineSignal as signal,
   defineComputed as computed,
-  defineAsyncSignal as asyncSignal
+  defineStatus as status
 } from "./define.js";
 export {
   createFlow,
+  createStore,
   createSignal,
+  createStatus,
   createComputed,
-  createAsyncSignal
 } from "./runtime.js";
 export {
-  run,
+  compose,
   isPromiseLike
-} from "./run.js";
+} from "./compose.js";
 export {
   set,
   update,
   when,
   onError,
-  state,
+  status as statusHelper,
   guard,
   transition,
   can,
@@ -39,6 +44,10 @@ export {
   setDefaultScheduler
 } from "./scheduler.js";
 
-export function flow(config, options) {
-  return createFlow(config, options);
+export function flow(optionsOrConfig, maybeConfig) {
+  if (arguments.length === 1) {
+    return createFlow(optionsOrConfig);
+  }
+
+  return createFlow(maybeConfig, optionsOrConfig);
 }

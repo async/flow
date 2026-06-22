@@ -1,16 +1,17 @@
 import {
-  ASYNC_SIGNAL_DEFINITION,
-  COMPUTED_DEFINITION,
-  SIGNAL_DEFINITION,
+  COMPUTED,
+  RESOURCE,
+  RESOURCE_IMMEDIATE,
+  SIGNAL,
+  STATUS,
   defineFlow,
-  isAsyncSignalDefinition,
   isComputedDefinition,
   isFlowDefinition,
   isPlainObject,
   isSignalDefinition,
-  isStateDefinition
+  isStatusDefinition
 } from "./define.js";
-import { isPromiseLike, isRunStop } from "./run.js";
+import { isPromiseLike } from "./compose.js";
 import { resolveScheduler } from "./scheduler.js";
 
 const RESERVED_INSTANCE_NAMES = new Set([
@@ -18,12 +19,13 @@ const RESERVED_INSTANCE_NAMES = new Set([
   "set",
   "update",
   "subscribe",
-  "run",
+  "dispatch",
   "snapshot",
   "restore",
   "destroy",
-  "signals",
+  "store",
   "refs",
+  "resources",
   "handlers"
 ]);
 
@@ -36,6 +38,7 @@ export function createSignal(initial, options = {}) {
   let notifyScheduled = false;
 
   const ref = {
+    [SIGNAL]: true,
     kind: "signal",
 
     get value() {
@@ -103,9 +106,40 @@ export function createSignal(initial, options = {}) {
   return ref;
 }
 
+export function createStatus(initial, allowed, options = {}) {
+  const allowedValues = allowed === undefined ? undefined : [...allowed];
+  const ref = createSignal(initial, options);
+  const setSignalValue = ref.set;
+
+  Object.defineProperty(ref, STATUS, {
+    configurable: false,
+    enumerable: false,
+    value: true
+  });
+
+  ref.kind = "status";
+  ref.allowed = allowedValues;
+  ref.set = (next) => {
+    if (allowedValues !== undefined) {
+      assertAllowedStatusValue(options.name, next, allowedValues);
+    }
+
+    return setSignalValue(next);
+  };
+  ref.update = (fn) => {
+    if (typeof fn !== "function") {
+      throw new TypeError("Signal update requires a function.");
+    }
+
+    return ref.set(fn(ref.get()));
+  };
+
+  return ref;
+}
+
 export function createComputed(compute, options = {}) {
   if (typeof compute !== "function") {
-    throw new TypeError("Computed signal requires a function.");
+    throw new TypeError("Computed store value requires a function.");
   }
 
   const scheduler = resolveScheduler(options);
@@ -116,6 +150,7 @@ export function createComputed(compute, options = {}) {
   let notifyScheduled = false;
 
   const ref = {
+    [COMPUTED]: true,
     kind: "computed",
 
     get value() {
@@ -193,64 +228,91 @@ export function createComputed(compute, options = {}) {
   return ref;
 }
 
-export function createAsyncSignal(loader, options = {}) {
-  if (typeof loader !== "function") {
-    throw new TypeError("Async signal requires a loader function.");
+export function createStore(declarations = {}, options = {}) {
+  if (!isPlainObject(declarations)) {
+    throw new TypeError("createStore(...) requires a store declaration object.");
   }
 
   const scheduler = resolveScheduler(options);
-  const hasInitial = Object.hasOwn(options, "initial");
-  const value = createSignal(options.initial, { scheduler });
-  const loading = createSignal(false, { scheduler });
-  const error = createSignal(null, { scheduler });
-  const ready = createSignal(hasInitial, { scheduler });
+  const refs = {};
+  const resources = {};
+  const plainValues = {};
+  const writableNames = new Set();
+  const statusNames = new Set();
+  const computedEntries = [];
+  const context = options.context ?? {};
+  let store;
 
-  function refresh(context = {}) {
-    loading.set(true);
-    error.set(null);
-
-    let result;
-    try {
-      result = loader(context);
-    } catch (caught) {
-      loading.set(false);
-      error.set(caught);
-      ready.set(false);
-      throw caught;
+  for (const [name, declaration] of Object.entries(declarations)) {
+    if (isComputedDeclaration(declaration)) {
+      computedEntries.push([name, declaration]);
+      continue;
     }
 
-    if (isPromiseLike(result)) {
-      return Promise.resolve(result).then(
-        (next) => {
-          value.set(next);
-          loading.set(false);
-          ready.set(true);
-          return next;
-        },
-        (caught) => {
-          loading.set(false);
-          error.set(caught);
-          ready.set(false);
-          throw caught;
-        }
-      );
+    if (isResourceLike(declaration)) {
+      resources[name] = declaration;
+      continue;
     }
 
-    value.set(result);
-    loading.set(false);
-    ready.set(true);
-    return result;
+    if (isPlainObject(declaration) && !isBrandedStoreEntry(declaration)) {
+      if (options.rejectPlainObjects) {
+        throw new TypeError(
+          `Flow store "${name}" is a plain object. Nested store objects are not supported in this revision.\nWrap object values with signal(value).`
+        );
+      }
+
+      plainValues[name] = declaration;
+      continue;
+    }
+
+    refs[name] = createWritableRefForDeclaration(name, declaration, scheduler);
+    if (refs[name]?.[STATUS]) {
+      statusNames.add(name);
+    }
+    writableNames.add(name);
+  }
+
+  store = createStoreProxy(refs, resources, plainValues, writableNames);
+
+  for (const [name, declaration] of computedEntries) {
+    const compute = typeof declaration === "function" ? declaration : declaration.compute;
+    refs[name] = createComputed(() => compute(store, context), { scheduler });
   }
 
   return {
-    kind: "asyncSignal",
-    refs: {
-      value,
-      loading,
-      error,
-      ready
+    store,
+    refs,
+    resources,
+    writableNames,
+    statusNames,
+    snapshot() {
+      const snapshot = {};
+
+      for (const [name, ref] of Object.entries(refs)) {
+        snapshot[name] = ref.snapshot();
+      }
+
+      for (const [name, value] of Object.entries(plainValues)) {
+        snapshot[name] = value;
+      }
+
+      return snapshot;
     },
-    refresh
+    restore(snapshot) {
+      if (!isPlainObject(snapshot)) {
+        throw new TypeError("Store restore(...) requires a snapshot object.");
+      }
+
+      for (const [name, value] of Object.entries(snapshot)) {
+        const ref = refs[name];
+
+        if (ref?.[SIGNAL] || ref?.[STATUS]) {
+          ref.set(value);
+        } else if (Object.hasOwn(plainValues, name)) {
+          plainValues[name] = value;
+        }
+      }
+    }
   };
 }
 
@@ -258,40 +320,71 @@ export function createFlow(definitionOrConfig, options = {}) {
   const definition = isFlowDefinition(definitionOrConfig)
     ? definitionOrConfig
     : defineFlow(definitionOrConfig);
-  const scheduler = resolveScheduler(options);
-  const refs = {};
+  const runtimeOptions = validateRuntimeOptions(options);
+  const scheduler = resolveScheduler(runtimeOptions);
   const handlers = {};
   const rawHandlers = {};
-  const writableNames = new Set();
-  const stateNames = new Set();
   const transitionMetadata = new Map();
   const wholeSubscribers = new Set();
   const refStops = [];
-  const computedEntries = [];
-  const asyncDefinitions = [];
+  const cleanups = new Set();
   let activeBatch = null;
   let destroyed = false;
+  let timeoutId = 0;
+  let flow;
 
-  const signals = createSignalsProxy(refs, writableNames);
+  for (const [name, handler] of Object.entries(definition.on)) {
+    if (handler?._flowTransition) {
+      transitionMetadata.set(name, handler._flowTransition);
+    }
+  }
 
-  const flow = {
-    signals,
+  const declaredStatusNames = Object.entries(definition.store)
+    .filter(([, declaration]) => isStatusDefinition(declaration))
+    .map(([name]) => name);
+
+  const storeState = createStore(definition.store, {
+    scheduler,
+    rejectPlainObjects: true,
+    context: {
+      describe: () => ({
+        statuses: declaredStatusNames,
+        transitions: Object.fromEntries(transitionMetadata),
+        handlers: Object.keys(definition.on)
+      })
+    }
+  });
+  const { store, refs, resources, writableNames, statusNames } = storeState;
+
+  flow = {
+    store,
     refs,
+    resources,
     handlers,
 
     get(name) {
-      assertKnownSignal(refs, name);
-      return refs[name].get();
+      assertKnownStoreValue(refs, resources, name);
+      return store[name];
     },
 
     set(name, value) {
       assertWritable(refs, writableNames, name);
-      return runFlowBatch(undefined, undefined, () => refs[name].set(value));
+      return runFlowBatch(undefined, undefined, () => {
+        store[name] = value;
+        return store[name];
+      });
     },
 
     update(name, fn) {
       assertWritable(refs, writableNames, name);
-      return runFlowBatch(undefined, undefined, () => refs[name].update(fn));
+      if (typeof fn !== "function") {
+        throw new TypeError("Flow update(...) requires an updater function.");
+      }
+
+      return runFlowBatch(undefined, undefined, () => {
+        store[name] = fn(store[name]);
+        return store[name];
+      });
     },
 
     subscribe(nameOrFn, maybeFn) {
@@ -300,11 +393,14 @@ export function createFlow(definitionOrConfig, options = {}) {
         return () => wholeSubscribers.delete(nameOrFn);
       }
 
-      assertKnownSignal(refs, nameOrFn);
+      assertKnownStoreValue(refs, resources, nameOrFn);
+      if (!refs[nameOrFn]) {
+        throw new Error(`Flow store value "${nameOrFn}" is not subscribable.`);
+      }
       return refs[nameOrFn].subscribe(maybeFn);
     },
 
-    run(name, input) {
+    dispatch(name, input) {
       if (destroyed) {
         throw new Error("Flow instance has been destroyed.");
       }
@@ -314,11 +410,9 @@ export function createFlow(definitionOrConfig, options = {}) {
         throw new Error(`Unknown Flow handler "${name}".`);
       }
 
-      const context = createHandlerContext(input);
-      let result;
-
-      result = runFlowBatch(name, input, () => {
-        const next = handler(context);
+      const receiver = createHandlerReceiver(input);
+      const result = runFlowBatch(name, input, () => {
+        const next = handler.call(receiver, store, input);
 
         if (isPromiseLike(next)) {
           return next;
@@ -333,37 +427,24 @@ export function createFlow(definitionOrConfig, options = {}) {
         );
       }
 
-      return applyHandlerResult(result);
+      return result;
     },
 
     snapshot() {
-      const snapshot = {};
-
-      for (const [name, ref] of Object.entries(refs)) {
-        snapshot[name] = ref.snapshot();
-      }
-
-      return snapshot;
+      return storeState.snapshot();
     },
 
     restore(snapshot) {
-      if (!isPlainObject(snapshot)) {
-        throw new TypeError("Flow restore(...) requires a snapshot object.");
-      }
-
-      runFlowBatch(undefined, undefined, () => {
-        for (const [name, value] of Object.entries(snapshot)) {
-          const ref = refs[name];
-
-          if (ref?.kind === "signal") {
-            ref.set(value);
-          }
-        }
-      });
+      runFlowBatch(undefined, undefined, () => storeState.restore(snapshot));
     },
 
     destroy() {
       destroyed = true;
+
+      for (const cleanup of [...cleanups]) {
+        cleanup();
+      }
+      cleanups.clear();
 
       for (const stop of refStops.splice(0)) {
         stop();
@@ -375,48 +456,14 @@ export function createFlow(definitionOrConfig, options = {}) {
     _describe() {
       return {
         writable: [...writableNames],
-        states: [...stateNames],
+        statuses: [...statusNames],
         transitions: Object.fromEntries(transitionMetadata),
-        signals: Object.keys(refs),
+        store: Object.keys(refs),
+        resources: Object.keys(resources),
         handlers: Object.keys(handlers)
       };
     }
   };
-
-  for (const [name, handler] of Object.entries(definition.on)) {
-    if (handler?._flowTransition) {
-      transitionMetadata.set(name, handler._flowTransition);
-    }
-  }
-
-  for (const [name, declaration] of Object.entries(definition.signals)) {
-    if (isComputedDeclaration(declaration)) {
-      computedEntries.push([name, declaration]);
-      continue;
-    }
-
-    if (isAsyncSignalDefinition(declaration)) {
-      asyncDefinitions.push([name, declaration]);
-      continue;
-    }
-
-    refs[name] = createWritableSignalForDeclaration(name, declaration, scheduler);
-    writableNames.add(name);
-    if (isStateDefinition(declaration)) {
-      stateNames.add(name);
-    }
-  }
-
-  for (const [name, declaration] of computedEntries) {
-    const compute = typeof declaration === "function" ? declaration : declaration.compute;
-    refs[name] = createComputed(() => compute(createHandlerContext(undefined)), {
-      scheduler
-    });
-  }
-
-  for (const [name, declaration] of asyncDefinitions) {
-    mountAsyncSignal(name, declaration);
-  }
 
   for (const [name, ref] of Object.entries(refs)) {
     refStops.push(ref.subscribe((value) => recordChange(name, value)));
@@ -426,36 +473,9 @@ export function createFlow(definitionOrConfig, options = {}) {
     registerHandler(name, handler);
   }
 
-  function mountAsyncSignal(name, declaration) {
-    const family = createAsyncSignal(
-      (context) => declaration.loader(context),
-      {
-        ...declaration.options,
-        scheduler
-      }
-    );
-    const refreshName = `refresh${capitalize(name)}`;
-
-    refs[name] = family.refs.value;
-    refs[`${name}.loading`] = family.refs.loading;
-    refs[`${name}.error`] = family.refs.error;
-    refs[`${name}.ready`] = family.refs.ready;
-    writableNames.add(name);
-
-    registerHandler(refreshName, (context) => {
-      const result = family.refresh(context);
-
-      if (isPromiseLike(result)) {
-        return Promise.resolve(result).then(() => undefined);
-      }
-
-      return undefined;
-    });
-  }
-
   function registerHandler(name, handler) {
     rawHandlers[name] = handler;
-    handlers[name] = (input) => flow.run(name, input);
+    handlers[name] = (input) => flow.dispatch(name, input);
     handlers[name].raw = handler;
 
     if (!RESERVED_INSTANCE_NAMES.has(name) && !Object.hasOwn(flow, name)) {
@@ -463,18 +483,55 @@ export function createFlow(definitionOrConfig, options = {}) {
         configurable: true,
         enumerable: true,
         value(input) {
-          return flow.run(name, input);
+          return flow.dispatch(name, input);
         }
       });
     }
   }
 
-  function createHandlerContext(input) {
-    return {
-      flow,
-      signals,
+  function createHandlerReceiver(input) {
+    const receiver = {
+      store,
       refs,
+      resources,
+      dispatch: flow.dispatch.bind(flow),
+      _describe: flow._describe.bind(flow),
+      after(ms, eventName, nextInput) {
+        if (!Number.isFinite(ms) || ms < 0) {
+          throw new TypeError("after(...) requires a non-negative millisecond delay.");
+        }
+        if (typeof eventName !== "string" || eventName.length === 0) {
+          throw new TypeError("after(...) requires an event name.");
+        }
+
+        const id = ++timeoutId;
+        const timeout = setTimeout(() => {
+          cleanups.delete(cleanup);
+          flow.dispatch(eventName, nextInput);
+        }, ms);
+        const cleanup = () => clearTimeout(timeout);
+        cleanups.add(cleanup);
+        return id;
+      },
+      dispose(cleanup) {
+        if (typeof cleanup !== "function") {
+          throw new TypeError("dispose(...) requires a cleanup function.");
+        }
+
+        cleanups.add(cleanup);
+        return () => cleanups.delete(cleanup);
+      }
+    };
+
+    const extra = resolveRuntimeContext(runtimeOptions.context, {
+      flow,
+      store,
       input
+    });
+
+    return {
+      ...receiver,
+      ...extra
     };
   }
 
@@ -483,7 +540,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     const batch = {
       name,
       input,
-      signals: {}
+      store: {}
     };
     activeBatch = batch;
 
@@ -494,11 +551,11 @@ export function createFlow(definitionOrConfig, options = {}) {
       activeBatch = previousBatch;
     }
 
-    if (Object.keys(batch.signals).length > 0) {
+    if (Object.keys(batch.store).length > 0) {
       notifyWholeSubscribers({
         name,
         input,
-        signals: batch.signals
+        store: batch.store
       });
     }
 
@@ -507,12 +564,12 @@ export function createFlow(definitionOrConfig, options = {}) {
 
   function recordChange(name, value) {
     if (activeBatch) {
-      activeBatch.signals[name] = value;
+      activeBatch.store[name] = value;
       return;
     }
 
     notifyWholeSubscribers({
-      signals: {
+      store: {
         [name]: value
       }
     });
@@ -529,20 +586,13 @@ export function createFlow(definitionOrConfig, options = {}) {
       return result;
     }
 
-    return applySignalUpdates(result);
+    return applyStoreUpdates(result);
   }
 
-  function applySignalUpdates(updates) {
+  function applyStoreUpdates(updates) {
     for (const [name, value] of Object.entries(updates)) {
-      if (!Object.hasOwn(refs, name)) {
-        throw new Error(`Flow handler returned unknown signal "${name}".`);
-      }
-
-      if (!writableNames.has(name)) {
-        throw new Error(`Flow signal "${name}" is read-only.`);
-      }
-
-      refs[name].set(value);
+      assertWritable(refs, writableNames, name);
+      store[name] = value;
     }
 
     return updates;
@@ -551,9 +601,9 @@ export function createFlow(definitionOrConfig, options = {}) {
   return flow;
 }
 
-function createWritableSignalForDeclaration(name, declaration, scheduler) {
-  if (isStateDefinition(declaration)) {
-    return createStateSignal(declaration.initial, declaration.allowed, {
+function createWritableRefForDeclaration(name, declaration, scheduler) {
+  if (isStatusDefinition(declaration)) {
+    return createStatus(declaration.initial, declaration.allowed, {
       name,
       scheduler
     });
@@ -563,50 +613,10 @@ function createWritableSignalForDeclaration(name, declaration, scheduler) {
     return createSignal(declaration.initial, { scheduler });
   }
 
-  if (
-    isPlainObject(declaration) &&
-    !isSignalDefinition(declaration) &&
-    !isComputedDefinition(declaration) &&
-    !isAsyncSignalDefinition(declaration)
-  ) {
-    throw new TypeError(
-      `Flow signal "${name}" is a plain object. Nested signal objects are not supported in v1.\nWrap object values with signal(value).`
-    );
-  }
-
   return createSignal(declaration, { scheduler });
 }
 
-function createStateSignal(initial, allowed, options = {}) {
-  const allowedValues = [...allowed];
-  const ref = createSignal(initial, options);
-  const setSignalValue = ref.set;
-
-  ref.set = (next) => {
-    assertAllowedStateValue(options.name, next, allowedValues);
-    return setSignalValue(next);
-  };
-
-  ref.update = (fn) => {
-    if (typeof fn !== "function") {
-      throw new TypeError("Signal update requires a function.");
-    }
-
-    return ref.set(fn(ref.get()));
-  };
-
-  return ref;
-}
-
-function assertAllowedStateValue(name, value, allowedValues) {
-  if (!allowedValues.some((allowed) => Object.is(allowed, value))) {
-    throw new Error(
-      `Invalid state value for Flow signal "${name}".`
-    );
-  }
-}
-
-function createSignalsProxy(refs, writableNames) {
+function createStoreProxy(refs, resources, plainValues, writableNames) {
   return new Proxy(
     {},
     {
@@ -615,7 +625,17 @@ function createSignalsProxy(refs, writableNames) {
           return undefined;
         }
 
-        return refs[prop]?.get();
+        const entry = refs[prop] ?? resources[prop];
+
+        if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED]) {
+          return entry.get();
+        }
+
+        if (entry?.[RESOURCE]) {
+          return entry?.[RESOURCE_IMMEDIATE] ? entry.value : entry;
+        }
+
+        return plainValues[prop];
       },
 
       set(_target, prop, value) {
@@ -623,65 +643,142 @@ function createSignalsProxy(refs, writableNames) {
           return false;
         }
 
-        assertWritable(refs, writableNames, prop);
-        refs[prop].set(value);
+        const entry = refs[prop] ?? resources[prop];
+
+        if (entry?.[STATUS]) {
+          entry.set(value);
+          return true;
+        }
+
+        if (entry?.[SIGNAL]) {
+          entry.set(value);
+          return true;
+        }
+
+        if (entry?.[COMPUTED]) {
+          throw new Error("Computed store values are read-only.");
+        }
+
+        if (entry?.[RESOURCE]) {
+          throw new Error("Resource store values are controlled through resource methods.");
+        }
+
+        if (!Object.hasOwn(plainValues, prop)) {
+          throw new Error(`Unknown Flow store value "${prop}".`);
+        }
+
+        plainValues[prop] = value;
+        writableNames.add(prop);
         return true;
       },
 
       has(_target, prop) {
-        return Object.hasOwn(refs, prop);
+        return Object.hasOwn(refs, prop) || Object.hasOwn(resources, prop) || Object.hasOwn(plainValues, prop);
       },
 
       ownKeys() {
-        return Reflect.ownKeys(refs);
+        return [...new Set([
+          ...Object.keys(refs),
+          ...Object.keys(resources),
+          ...Object.keys(plainValues)
+        ])];
       },
 
       getOwnPropertyDescriptor(_target, prop) {
-        if (!Object.hasOwn(refs, prop)) {
+        if (typeof prop === "symbol") {
           return undefined;
         }
 
-        return {
-          enumerable: true,
-          configurable: true
-        };
+        if (prop in refs || prop in resources || prop in plainValues) {
+          return {
+            configurable: true,
+            enumerable: true
+          };
+        }
+
+        return undefined;
       }
     }
   );
 }
 
-function isComputedDeclaration(declaration) {
-  return typeof declaration === "function" || isComputedDefinition(declaration);
+function isComputedDeclaration(value) {
+  return typeof value === "function" || isComputedDefinition(value);
 }
 
-function assertKnownSignal(refs, name) {
-  if (!Object.hasOwn(refs, name)) {
-    throw new Error(`Unknown Flow signal "${name}".`);
+function isBrandedStoreEntry(value) {
+  return isSignalDefinition(value) || isStatusDefinition(value) || isComputedDefinition(value) || isResourceLike(value);
+}
+
+function isResourceLike(value) {
+  return Boolean(value && typeof value === "object" && value[RESOURCE]);
+}
+
+function assertAllowedStatusValue(name, value, allowedValues) {
+  if (!allowedValues.some((allowed) => Object.is(allowed, value))) {
+    throw new Error(`Invalid status value for Flow store "${name}".`);
+  }
+}
+
+function assertKnownStoreValue(refs, resources, name) {
+  if (!Object.hasOwn(refs, name) && !Object.hasOwn(resources, name)) {
+    throw new Error(`Unknown Flow store value "${name}".`);
   }
 }
 
 function assertWritable(refs, writableNames, name) {
-  assertKnownSignal(refs, name);
+  if (!Object.hasOwn(refs, name)) {
+    throw new Error(`Unknown Flow store value "${name}".`);
+  }
 
   if (!writableNames.has(name)) {
-    throw new Error(`Flow signal "${name}" is read-only.`);
+    throw new Error(`Flow store value "${name}" is read-only.`);
   }
 }
 
 function trackDependency(ref) {
-  const current = dependencyStack.at(-1);
-
+  const current = dependencyStack[dependencyStack.length - 1];
   if (current) {
     current.add(ref);
   }
 }
 
-function capitalize(value) {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+function validateRuntimeOptions(options) {
+  if (options === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(options)) {
+    throw new TypeError("Flow runtime options must be an object.");
+  }
+
+  for (const key of Object.keys(options)) {
+    if (key !== "scheduler" && key !== "context") {
+      throw new TypeError(`Unknown Flow runtime option "${key}".`);
+    }
+  }
+
+  if (options.context !== undefined && typeof options.context !== "function" && !isPlainObject(options.context)) {
+    throw new TypeError("Flow context option must be an object or function.");
+  }
+
+  return options;
 }
 
-export {
-  SIGNAL_DEFINITION,
-  COMPUTED_DEFINITION,
-  ASYNC_SIGNAL_DEFINITION
-};
+function resolveRuntimeContext(context, payload) {
+  if (context === undefined) {
+    return {};
+  }
+
+  const resolved = typeof context === "function" ? context(payload) : context;
+
+  if (resolved === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(resolved)) {
+    throw new TypeError("Flow context option must resolve to an object.");
+  }
+
+  return resolved;
+}

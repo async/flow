@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { flow, onError, set, update, when } from "@async/flow";
-import { run } from "@async/flow/run";
+import { compose } from "@async/flow/compose";
 
-test("set and update helpers write through Flow signals", () => {
+test("set and update helpers write through Flow store values", () => {
   const counter = flow({
-    signals: {
+    store: {
       loading: false,
       count: 0
     },
@@ -18,22 +18,22 @@ test("set and update helpers write through Flow signals", () => {
   counter.start();
   counter.increment();
 
-  assert.equal(counter.signals.loading, true);
-  assert.equal(counter.signals.count, 1);
+  assert.equal(counter.store.loading, true);
+  assert.equal(counter.store.count, 1);
 });
 
-test("run helpers can be used as a normal Flow handler function", async () => {
+test("compose helpers can be used as a normal Flow handler function", async () => {
   const checkout = flow({
-    signals: {
+    store: {
       loading: false,
       canSubmit: true,
       orderId: null
     },
     on: {
-      submit: run([
-        when(({ signals }) => signals.canSubmit),
+      submit: compose([
+        when((store) => store.canSubmit),
         set("loading", true),
-        async ({ input }) => ({
+        async (_store, input) => ({
           loading: false,
           orderId: input.orderId
         })
@@ -43,7 +43,7 @@ test("run helpers can be used as a normal Flow handler function", async () => {
 
   const result = checkout.submit({ orderId: "ord_123" });
 
-  assert.equal(checkout.signals.loading, true);
+  assert.equal(checkout.store.loading, true);
   assert.deepEqual(await result, {
     loading: false,
     orderId: "ord_123"
@@ -57,25 +57,25 @@ test("run helpers can be used as a normal Flow handler function", async () => {
 
 test("when stops a helper chain without applying later steps", () => {
   const checkout = flow({
-    signals: {
+    store: {
       canSubmit: false,
       loading: false
     },
     on: {
-      submit: run([
-        when(({ signals }) => signals.canSubmit),
+      submit: compose([
+        when((store) => store.canSubmit),
         set("loading", true)
       ])
     }
   });
 
   assert.equal(checkout.submit(), undefined);
-  assert.equal(checkout.signals.loading, false);
+  assert.equal(checkout.store.loading, false);
 });
 
-test("onError maps sync throws and async rejections to signal updates", async () => {
+test("onError maps sync throws and async rejections to store updates", async () => {
   const checkout = flow({
-    signals: {
+    store: {
       error: null
     },
     on: {
@@ -95,8 +95,8 @@ test("onError maps sync throws and async rejections to signal updates", async ()
   });
 
   checkout.sync();
-  assert.equal(checkout.signals.error, "sync failed");
+  assert.equal(checkout.store.error, "sync failed");
 
   await checkout.asyncFailure();
-  assert.equal(checkout.signals.error, "async failed");
+  assert.equal(checkout.store.error, "async failed");
 });

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isPromiseLike, run } from "@async/flow/run";
+import { compose, isPromiseLike } from "@async/flow/compose";
 
-test("run(fn) and run(array) return functions", () => {
-  assert.equal(typeof run(() => 1), "function");
-  assert.equal(typeof run([() => 1]), "function");
+test("compose(fn) and compose(array) return functions", () => {
+  assert.equal(typeof compose(() => 1), "function");
+  assert.equal(typeof compose([() => 1]), "function");
 });
 
 test("all-sync steps return synchronously with the last non-undefined result", () => {
-  const handler = run([
+  const handler = compose([
     () => 1,
     () => undefined,
     () => 2
@@ -20,9 +20,29 @@ test("all-sync steps return synchronously with the last non-undefined result", (
   assert.equal(result, 2);
 });
 
+test("steps receive stable input and previous result", () => {
+  const seen = [];
+  const handler = compose([
+    (store, input, previous) => {
+      seen.push([input, previous]);
+      return store.count + input.by;
+    },
+    (_store, input, previous) => {
+      seen.push([input, previous]);
+      return previous * 2;
+    }
+  ]);
+
+  assert.equal(handler({ count: 2 }, { by: 3 }), 10);
+  assert.deepEqual(seen, [
+    [{ by: 3 }, undefined],
+    [{ by: 3 }, 5]
+  ]);
+});
+
 test("async steps switch remaining execution to a promise-like result", async () => {
   const order = [];
-  const handler = run([
+  const handler = compose([
     () => {
       order.push("first");
       return 1;
@@ -47,7 +67,7 @@ test("async steps switch remaining execution to a promise-like result", async ()
 test("sync errors throw before an async boundary and reject after one", async () => {
   assert.throws(
     () =>
-      run([
+      compose([
         () => {
           throw new Error("sync");
         }
@@ -56,7 +76,7 @@ test("sync errors throw before an async boundary and reject after one", async ()
   );
 
   await assert.rejects(
-    run([
+    compose([
       async () => 1,
       () => {
         throw new Error("late");
@@ -68,7 +88,7 @@ test("sync errors throw before an async boundary and reject after one", async ()
 
 test("async rejections reject", async () => {
   await assert.rejects(
-    run([
+    compose([
       async () => {
         throw new Error("async");
       }

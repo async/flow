@@ -11,7 +11,7 @@ import {
   setDefaultScheduler
 } from "@async/flow";
 
-test("standalone signals work without a provided scheduler", () => {
+test("standalone signal refs work without a provided scheduler", () => {
   const signal = createSignal(0);
   const values = [];
 
@@ -142,13 +142,13 @@ test("createFlow passes the scheduler to owned primitives and batches handlers",
   };
   const cart = createFlow(
     {
-      signals: {
+      store: {
         items: [],
-        count: ({ signals }) => signals.items.length
+        count: (store) => store.items.length
       },
       on: {
-        add: ({ signals, input }) => ({
-          items: [...signals.items, input.item]
+        add: (store, input) => ({
+          items: [...store.items, input.item]
         })
       }
     },
@@ -163,7 +163,7 @@ test("createFlow passes the scheduler to owned primitives and batches handlers",
     {
       name: "add",
       input: { item: { id: "sku_123" } },
-      signals: {
+      store: {
         count: 1,
         items: [{ id: "sku_123" }]
       }
@@ -192,11 +192,11 @@ test("top-level flow uses the current default scheduler at creation time", async
 
   try {
     const counter = flow({
-      signals: {
+      store: {
         count: 0
       },
       on: {
-        increment: ({ signals }) => ({ count: signals.count + 1 })
+        increment: (store) => ({ count: store.count + 1 })
       }
     });
     const changes = [];
@@ -205,7 +205,7 @@ test("top-level flow uses the current default scheduler at creation time", async
     counter.increment();
     assert.deepEqual(changes, []);
     await queuedScheduler.flush();
-    assert.deepEqual(changes, [{ signals: { count: 1 } }]);
+    assert.deepEqual(changes, [{ store: { count: 1 } }]);
   } finally {
     resetDefaultScheduler();
   }

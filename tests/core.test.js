@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  asyncSignal,
   computed,
   defineFlow,
   flow,
-  signal
+  signal,
+  status,
+  STATUS
 } from "@async/flow";
 import {
   createComputed,
   createFlow,
-  createSignal
+  createSignal,
+  createStatus,
+  createStore
 } from "@async/flow/runtime";
 
 test("createSignal exposes get value set update subscribe and snapshot", () => {
@@ -31,6 +34,15 @@ test("createSignal exposes get value set update subscribe and snapshot", () => {
   assert.deepEqual(values, [1, 2]);
 });
 
+test("createStatus validates allowed values and carries the status brand", () => {
+  const phase = createStatus("idle", ["idle", "loading"]);
+
+  assert.equal(phase[STATUS], true);
+  phase.set("loading");
+  assert.equal(phase.get(), "loading");
+  assert.throws(() => phase.set("done"), /Invalid status value/);
+});
+
 test("createComputed tracks signal dependencies and notifies when value changes", () => {
   const count = createSignal(1);
   const doubled = createComputed(() => count.value * 2);
@@ -44,29 +56,52 @@ test("createComputed tracks signal dependencies and notifies when value changes"
   assert.deepEqual(values, [4]);
 });
 
-test("flow creates store-like signals and separate refs", () => {
+test("createStore normalizes values and exposes refs behind a store proxy", () => {
+  const cart = createStore({
+    items: [],
+    selectedId: signal(null),
+    count: (store) => store.items.length,
+    isEmpty: computed((store) => store.count === 0),
+    phase: status("idle", ["idle", "ready"])
+  });
+
+  cart.store.items = [{ id: "sku_123" }];
+  cart.store.selectedId = "sku_123";
+  cart.store.phase = "ready";
+
+  assert.deepEqual(cart.store.items, [{ id: "sku_123" }]);
+  assert.equal(cart.store.count, 1);
+  assert.equal(cart.store.isEmpty, false);
+  assert.equal(cart.refs.selectedId.get(), "sku_123");
+  assert.equal(cart.refs.phase[STATUS], true);
+  assert.throws(() => {
+    cart.store.count = 10;
+  }, /read-only/);
+});
+
+test("flow creates store and separate refs", () => {
   const cart = flow({
-    signals: {
+    store: {
       items: [],
       selectedId: signal(null),
-      count: ({ signals }) => signals.items.length,
-      isEmpty: computed(({ signals }) => signals.count === 0)
+      count: (store) => store.items.length,
+      isEmpty: computed((store) => store.count === 0)
     },
     on: {
-      add({ signals, input }) {
-        signals.items = [...signals.items, input.item];
+      add(store, input) {
+        store.items = [...store.items, input.item];
       },
-      select({ refs, input }) {
-        refs.selectedId.set(input.id);
+      select(store, input) {
+        this.refs.selectedId.set(input.id);
       },
       clear: () => ({ items: [] })
     }
   });
 
   cart.add({ item: { id: "sku_123" } });
-  assert.deepEqual(cart.signals.items, [{ id: "sku_123" }]);
-  assert.equal(cart.signals.count, 1);
-  assert.equal(cart.signals.isEmpty, false);
+  assert.deepEqual(cart.store.items, [{ id: "sku_123" }]);
+  assert.equal(cart.store.count, 1);
+  assert.equal(cart.store.isEmpty, false);
   assert.deepEqual(cart.refs.items.value, [{ id: "sku_123" }]);
 
   cart.select({ id: "sku_123" });
@@ -83,11 +118,13 @@ test("flow creates store-like signals and separate refs", () => {
 
 test("flow instances created from one definition do not share live state", () => {
   const definition = defineFlow({
-    signals: {
+    store: {
       count: 0
     },
     on: {
-      increment: ({ signals }) => ({ count: signals.count + 1 })
+      increment(store) {
+        return { count: store.count + 1 };
+      }
     }
   });
 
@@ -95,33 +132,33 @@ test("flow instances created from one definition do not share live state", () =>
   const second = createFlow(definition);
 
   first.increment();
-  assert.equal(first.signals.count, 1);
-  assert.equal(second.signals.count, 0);
+  assert.equal(first.store.count, 1);
+  assert.equal(second.store.count, 0);
 });
 
-test("plain object signal declarations are invalid unless wrapped in signal", () => {
+test("plain object store declarations are invalid unless wrapped in signal", () => {
   assert.throws(
     () =>
       flow({
-        signals: {
+        store: {
           product: {
             name: "Keyboard"
           }
         }
       }),
-    /Nested signal objects are not supported/
+    /Nested store objects are not supported/
   );
 
   const product = flow({
-    signals: {
+    store: {
       product: signal({ name: "Keyboard" })
     }
   });
 
-  assert.deepEqual(product.signals.product, { name: "Keyboard" });
+  assert.deepEqual(product.store.product, { name: "Keyboard" });
 });
 
-test("handler arrays are invalid and returned objects update writable signals", () => {
+test("handler arrays are invalid and returned objects update writable store values", () => {
   assert.throws(
     () =>
       flow({
@@ -129,36 +166,36 @@ test("handler arrays are invalid and returned objects update writable signals", 
           submit: []
         }
       }),
-    /Use run\(\[\.\.\.\]\)/
+    /Use compose\(\[\.\.\.\]\)/
   );
 
   const counter = flow({
-    signals: {
+    store: {
       count: 0,
-      doubled: ({ signals }) => signals.count * 2
+      doubled: (store) => store.count * 2
     },
     on: {
-      increment: ({ signals }) => ({ count: signals.count + 1 }),
+      increment: (store) => ({ count: store.count + 1 }),
       typo: () => ({ coutn: 1 }),
       writeComputed: () => ({ doubled: 10 })
     }
   });
 
   assert.deepEqual(counter.increment(), { count: 1 });
-  assert.equal(counter.signals.doubled, 2);
-  assert.throws(() => counter.typo(), /unknown signal "coutn"/);
+  assert.equal(counter.store.doubled, 2);
+  assert.throws(() => counter.typo(), /Unknown Flow store value "coutn"/);
   assert.throws(() => counter.writeComputed(), /read-only/);
 });
 
 test("whole-flow subscribers receive batched change records", () => {
   const changes = [];
   const checkout = flow({
-    signals: {
+    store: {
       loading: false,
       orderId: null
     },
     on: {
-      submit: ({ input }) => ({
+      submit: (store, input) => ({
         loading: true,
         orderId: input.orderId
       })
@@ -172,7 +209,7 @@ test("whole-flow subscribers receive batched change records", () => {
     {
       name: "submit",
       input: { orderId: "ord_123" },
-      signals: {
+      store: {
         loading: true,
         orderId: "ord_123"
       }
@@ -182,37 +219,63 @@ test("whole-flow subscribers receive batched change records", () => {
 
 test("restore updates writable refs and recomputes computed refs", () => {
   const cart = flow({
-    signals: {
+    store: {
       items: [],
-      count: ({ signals }) => signals.items.length
+      count: (store) => store.items.length
     }
   });
 
   cart.restore({ items: [{ id: "sku_123" }], count: 99 });
 
-  assert.equal(cart.signals.count, 1);
+  assert.equal(cart.store.count, 1);
   assert.deepEqual(cart.snapshot(), {
     items: [{ id: "sku_123" }],
     count: 1
   });
 });
 
-test("asyncSignal creates value and helper-owned status refs", async () => {
-  const product = flow({
-    signals: {
-      id: "sku_123",
-      details: asyncSignal(async ({ signals }) => ({ id: signals.id }))
+test("handlers receive store input and receiver capabilities", () => {
+  const events = [];
+  const counter = flow(
+    {
+      context() {
+        return {
+          logger: events
+        };
+      }
+    },
+    {
+      store: {
+        count: 0
+      },
+      on: {
+        increment(store, input) {
+          store.count += input.by;
+          this.logger.push(["increment", store.count]);
+          return this.dispatch("read");
+        },
+        read(store) {
+          return store.count;
+        }
+      }
+    }
+  );
+
+  assert.equal(counter.dispatch("increment", { by: 2 }), 2);
+  assert.deepEqual(events, [["increment", 2]]);
+  assert.equal(counter.handlers.read(), 2);
+});
+
+test("arrow handlers work when they only need store and input", () => {
+  const counter = flow({
+    store: {
+      count: 0
+    },
+    on: {
+      increment: (store, input) => ({ count: store.count + input.by })
     }
   });
 
-  assert.equal(product.signals.details, undefined);
-  assert.equal(product.refs["details.loading"].value, false);
-  assert.equal(product.refs["details.error"].value, null);
-  assert.equal(product.refs["details.ready"].value, false);
-
-  await product.handlers.refreshDetails();
-
-  assert.deepEqual(product.signals.details, { id: "sku_123" });
-  assert.equal(product.refs["details.loading"].value, false);
-  assert.equal(product.refs["details.ready"].value, true);
+  counter.increment({ by: 3 });
+  assert.equal(counter.store.count, 3);
 });

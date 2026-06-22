@@ -32,10 +32,10 @@
       "import": "./src/runtime.js",
       "default": "./src/runtime.js"
     },
-    "./run": {
-      "types": "./src/run.d.ts",
-      "import": "./src/run.js",
-      "default": "./src/run.js"
+    "./compose": {
+      "types": "./src/compose.d.ts",
+      "import": "./src/compose.js",
+      "default": "./src/compose.js"
     },
     "./helpers": {
       "types": "./src/helpers.d.ts",

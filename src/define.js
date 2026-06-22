@@ -1,7 +1,13 @@
 export const FLOW_DEFINITION = "async.flow.definition";
 export const SIGNAL_DEFINITION = "async.flow.signal";
 export const COMPUTED_DEFINITION = "async.flow.computed";
-export const ASYNC_SIGNAL_DEFINITION = "async.flow.asyncSignal";
+export const STATUS_DEFINITION = "async.flow.status";
+
+export const SIGNAL = Symbol.for("@async/flow.signal");
+export const STATUS = Symbol.for("@async/flow.status");
+export const COMPUTED = Symbol.for("@async/flow.computed");
+export const RESOURCE = Symbol.for("@async/flow.resource");
+export const RESOURCE_IMMEDIATE = Symbol.for("@async/flow.resource.immediate");
 
 export function defineSignal(initial) {
   return {
@@ -10,20 +16,19 @@ export function defineSignal(initial) {
   };
 }
 
-export function defineState(initial, allowed) {
-  if (!Array.isArray(allowed) || allowed.length === 0) {
-    throw new TypeError("state(...) requires a non-empty allowed values array.");
+export function defineStatus(initial, allowed) {
+  if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0)) {
+    throw new TypeError("status(...) allowed values must be a non-empty array when provided.");
   }
 
-  if (!allowed.some((value) => Object.is(value, initial))) {
-    throw new Error("state(...) initial value must be present in the allowed values.");
+  if (allowed !== undefined && !allowed.some((value) => Object.is(value, initial))) {
+    throw new Error("status(...) initial value must be present in the allowed values.");
   }
 
   return {
-    kind: SIGNAL_DEFINITION,
+    kind: STATUS_DEFINITION,
     initial,
-    state: true,
-    allowed: [...allowed]
+    allowed: allowed === undefined ? undefined : [...allowed]
   };
 }
 
@@ -38,18 +43,6 @@ export function defineComputed(compute) {
   };
 }
 
-export function defineAsyncSignal(loader, options = {}) {
-  if (typeof loader !== "function") {
-    throw new TypeError("asyncSignal(...) requires a loader function.");
-  }
-
-  return {
-    kind: ASYNC_SIGNAL_DEFINITION,
-    loader,
-    options: { ...options }
-  };
-}
-
 export function defineFlow(config = {}) {
   if (isFlowDefinition(config)) {
     return config;
@@ -59,11 +52,15 @@ export function defineFlow(config = {}) {
     throw new TypeError("defineFlow(...) requires a configuration object.");
   }
 
-  const signals = config.signals ?? {};
+  if (Object.hasOwn(config, "signals")) {
+    throw new TypeError('Flow "signals" has been replaced by "store".');
+  }
+
+  const store = config.store ?? {};
   const on = config.on ?? {};
 
-  if (!isPlainObject(signals)) {
-    throw new TypeError('Flow "signals" must be an object.');
+  if (!isPlainObject(store)) {
+    throw new TypeError('Flow "store" must be an object.');
   }
 
   if (!isPlainObject(on)) {
@@ -73,7 +70,7 @@ export function defineFlow(config = {}) {
   for (const [name, handler] of Object.entries(on)) {
     if (Array.isArray(handler)) {
       throw new TypeError(
-        `Flow handler "${name}" is an array. Use run([...]) to create a handler function.`
+        `Flow handler "${name}" is an array. Use compose([...]) to create a handler function.`
       );
     }
 
@@ -84,7 +81,7 @@ export function defineFlow(config = {}) {
 
   return {
     kind: FLOW_DEFINITION,
-    signals: { ...signals },
+    store: { ...store },
     on: { ...on }
   };
 }
@@ -97,16 +94,12 @@ export function isSignalDefinition(value) {
   return isPlainObject(value) && value.kind === SIGNAL_DEFINITION;
 }
 
-export function isStateDefinition(value) {
-  return isSignalDefinition(value) && value.state === true && Array.isArray(value.allowed);
+export function isStatusDefinition(value) {
+  return isPlainObject(value) && value.kind === STATUS_DEFINITION;
 }
 
 export function isComputedDefinition(value) {
   return isPlainObject(value) && value.kind === COMPUTED_DEFINITION;
-}
-
-export function isAsyncSignalDefinition(value) {
-  return isPlainObject(value) && value.kind === ASYNC_SIGNAL_DEFINITION;
 }
 
 export function isPlainObject(value) {
@@ -121,5 +114,4 @@ export function isPlainObject(value) {
 export const flow = defineFlow;
 export const signal = defineSignal;
 export const computed = defineComputed;
-export const asyncSignal = defineAsyncSignal;
-export const state = defineState;
+export const status = defineStatus;

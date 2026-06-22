@@ -1,10 +1,10 @@
-import { defineComputed, defineState, isPlainObject } from "./define.js";
-import { createRunStop, isPromiseLike } from "./run.js";
+import { defineComputed, defineStatus, isPlainObject } from "./define.js";
+import { createComposeStop, isPromiseLike } from "./compose.js";
 
-export const state = defineState;
+export const status = defineStatus;
 
 export function set(nameOrUpdates, maybeValue) {
-  return function setStep(context) {
+  return function setStep(store) {
     const updates =
       typeof nameOrUpdates === "string"
         ? { [nameOrUpdates]: maybeValue }
@@ -13,7 +13,7 @@ export function set(nameOrUpdates, maybeValue) {
     assertUpdateObject(updates, "set");
 
     for (const [name, value] of Object.entries(updates)) {
-      context.signals[name] = value;
+      store[name] = value;
     }
 
     return undefined;
@@ -22,15 +22,15 @@ export function set(nameOrUpdates, maybeValue) {
 
 export function update(name, fn) {
   if (typeof name !== "string" || name.length === 0) {
-    throw new TypeError("update(...) requires a signal name.");
+    throw new TypeError("update(...) requires a store value name.");
   }
 
   if (typeof fn !== "function") {
     throw new TypeError("update(...) requires an updater function.");
   }
 
-  return function updateStep(context) {
-    context.signals[name] = fn(context.signals[name], context);
+  return function updateStep(store, input, previous) {
+    store[name] = fn(store[name], store, input, previous);
     return undefined;
   };
 }
@@ -40,8 +40,8 @@ export function when(predicate) {
     throw new TypeError("when(...) requires a predicate function.");
   }
 
-  return function whenStep(context) {
-    return predicate(context) ? undefined : createRunStop();
+  return function whenStep(store, input, previous) {
+    return predicate(store, input, previous) ? undefined : createComposeStop();
   };
 }
 
@@ -54,17 +54,19 @@ export function onError(handle, handler) {
     throw new TypeError("onError(...) requires a handler function.");
   }
 
-  const onErrorStep = function onErrorStep(context) {
+  const onErrorStep = function onErrorStep(store, input, previous) {
     try {
-      const result = handler(context);
+      const result = handler.call(this, store, input, previous);
 
       if (isPromiseLike(result)) {
-        return Promise.resolve(result).catch((error) => handle(error, context));
+        return Promise.resolve(result).catch((error) =>
+          handle.call(this, error, store, input, previous)
+        );
       }
 
       return result;
     } catch (error) {
-      return handle(error, context);
+      return handle.call(this, error, store, input, previous);
     }
   };
 
@@ -81,12 +83,12 @@ export function guard(predicate, handler) {
     throw new TypeError("guard(...) requires a handler function.");
   }
 
-  const guardStep = function guardStep(context) {
-    if (!predicate(context)) {
+  const guardStep = function guardStep(store, input, previous) {
+    if (!predicate.call(this, store, input, previous)) {
       return undefined;
     }
 
-    return handler(context);
+    return handler.call(this, store, input, previous);
   };
 
   copyFlowMetadata(handler, guardStep);
@@ -95,19 +97,19 @@ export function guard(predicate, handler) {
 
 export function transition(config, options = {}) {
   const rules = normalizeTransitionRules(config);
-  const stateName = options?.state ?? options?.signal;
+  const statusName = options?.status ?? options?.state ?? options?.signal;
 
-  const transitionStep = function transitionStep(context) {
-    const name = resolveStateName(context, stateName);
-    const current = context.signals[name];
-    const rule = rules.find((entry) => transitionRuleMatches(entry, current, context));
+  const transitionStep = function transitionStep(store, input, previous) {
+    const name = resolveStatusName(this, statusName);
+    const current = store[name];
+    const rule = rules.find((entry) => transitionRuleMatches(entry, current, store, input, previous));
 
     if (!rule) {
       return undefined;
     }
 
-    context.signals[name] = typeof rule.to === "function"
-      ? rule.to(context)
+    store[name] = typeof rule.to === "function"
+      ? rule.to.call(this, store, input, previous)
       : rule.to;
     return undefined;
   };
@@ -115,7 +117,7 @@ export function transition(config, options = {}) {
   Object.defineProperty(transitionStep, "_flowTransition", {
     configurable: true,
     value: {
-      state: stateName,
+      status: statusName,
       rules
     }
   });
@@ -128,21 +130,21 @@ export function can(eventName, options = {}) {
     throw new TypeError("can(...) requires a transition handler name.");
   }
 
-  return defineComputed((context) => {
-    const metadata = context.flow._describe?.().transitions?.[eventName];
+  return defineComputed((store, context) => {
+    const metadata = context?.describe?.().transitions?.[eventName];
     if (!metadata) {
       return false;
     }
 
-    const name = resolveStateName(context, options?.state ?? metadata.state);
-    const current = context.signals[name];
-    return metadata.rules.some((entry) => transitionRuleMatches(entry, current, context));
+    const name = resolveStatusName(context, options?.status ?? options?.state ?? metadata.status);
+    const current = store[name];
+    return metadata.rules.some((entry) => transitionRuleMatches(entry, current, store));
   });
 }
 
 export function matches(value, options = {}) {
-  return defineComputed((context) =>
-    Object.is(context.signals[resolveStateName(context, options?.state ?? options?.signal)], value)
+  return defineComputed((store, context) =>
+    Object.is(store[resolveStatusName(context, options?.status ?? options?.state ?? options?.signal)], value)
   );
 }
 
@@ -152,7 +154,7 @@ function assertUpdateObject(value, helperName) {
     typeof value !== "object" ||
     Array.isArray(value)
   ) {
-    throw new TypeError(`${helperName}(...) requires a signal update object.`);
+    throw new TypeError(`${helperName}(...) requires a store update object.`);
   }
 }
 
@@ -191,12 +193,12 @@ function normalizeTransitionRule(rule) {
   };
 }
 
-function transitionRuleMatches(rule, current, context) {
+function transitionRuleMatches(rule, current, store, input, previous) {
   if (rule.from !== undefined && !matchesFrom(rule.from, current)) {
     return false;
   }
 
-  return typeof rule.when !== "function" || Boolean(rule.when(context));
+  return typeof rule.when !== "function" || Boolean(rule.when(store, input, previous));
 }
 
 function matchesFrom(from, current) {
@@ -205,17 +207,17 @@ function matchesFrom(from, current) {
     : Object.is(from, current);
 }
 
-function resolveStateName(context, requested) {
+function resolveStatusName(source, requested) {
   if (typeof requested === "string" && requested.length > 0) {
     return requested;
   }
 
-  const states = context.flow._describe?.().states ?? [];
-  if (states.length === 1) {
-    return states[0];
+  const statuses = source?._describe?.().statuses ?? source?.describe?.().statuses ?? [];
+  if (statuses.length === 1) {
+    return statuses[0];
   }
 
-  throw new Error("Strict Flow helpers require a single state signal or an explicit state option.");
+  throw new Error("Strict Flow helpers require a single status value or an explicit status option.");
 }
 
 function copyFlowMetadata(source, target) {

@@ -6,33 +6,33 @@ import {
   guard,
   matches,
   set,
-  state,
+  status,
   transition
 } from "@async/flow";
-import { run } from "@async/flow/run";
+import { compose } from "@async/flow/compose";
 
-test("state stores values in ordinary writable Flow signals and validates writes", () => {
+test("status stores values in writable Flow refs and validates writes", () => {
   const checkout = flow({
-    signals: {
-      step: state("shipping", ["shipping", "payment", "review"])
+    store: {
+      step: status("shipping", ["shipping", "payment", "review"])
     }
   });
 
-  assert.equal(checkout.refs.step.kind, "signal");
-  checkout.signals.step = "payment";
-  assert.equal(checkout.signals.step, "payment");
+  assert.equal(checkout.refs.step.kind, "status");
+  checkout.store.step = "payment";
+  assert.equal(checkout.store.step, "payment");
   assert.throws(
     () => {
-      checkout.signals.step = "done";
+      checkout.store.step = "done";
     },
-    /Invalid state value/
+    /Invalid status value/
   );
 });
 
-test("transition writes matching state changes and no-ops when no rule matches", () => {
+test("transition writes matching status changes and no-ops when no rule matches", () => {
   const checkout = flow({
-    signals: {
-      step: state("shipping", ["shipping", "payment", "review"])
+    store: {
+      step: status("shipping", ["shipping", "payment", "review"])
     },
     on: {
       next: transition([
@@ -43,43 +43,43 @@ test("transition writes matching state changes and no-ops when no rule matches",
   });
 
   assert.equal(checkout.next(), undefined);
-  assert.equal(checkout.signals.step, "payment");
+  assert.equal(checkout.store.step, "payment");
   checkout.next();
-  assert.equal(checkout.signals.step, "review");
+  assert.equal(checkout.store.step, "review");
   checkout.next();
-  assert.equal(checkout.signals.step, "review");
+  assert.equal(checkout.store.step, "review");
 });
 
 test("guard skips the handler when the predicate is false", () => {
   const checkout = flow({
-    signals: {
-      step: state("payment", ["shipping", "payment", "review"]),
+    store: {
+      step: status("payment", ["shipping", "payment", "review"]),
       submitted: false
     },
     on: {
       submit: guard(
-        ({ signals }) => signals.step === "review",
+        (store) => store.step === "review",
         set("submitted", true)
       )
     }
   });
 
   assert.equal(checkout.submit(), undefined);
-  assert.equal(checkout.signals.submitted, false);
+  assert.equal(checkout.store.submitted, false);
 
-  checkout.signals.step = "review";
+  checkout.store.step = "review";
   checkout.submit();
-  assert.equal(checkout.signals.submitted, true);
+  assert.equal(checkout.store.submitted, true);
 });
 
-test("strict helpers work inside run pipelines", () => {
+test("strict helpers work inside compose pipelines", () => {
   const checkout = flow({
-    signals: {
-      step: state("shipping", ["shipping", "payment"]),
+    store: {
+      step: status("shipping", ["shipping", "payment"]),
       moved: false
     },
     on: {
-      next: run([
+      next: compose([
         transition([{ from: "shipping", to: "payment" }]),
         set("moved", true)
       ])
@@ -87,14 +87,14 @@ test("strict helpers work inside run pipelines", () => {
   });
 
   checkout.next();
-  assert.equal(checkout.signals.step, "payment");
-  assert.equal(checkout.signals.moved, true);
+  assert.equal(checkout.store.step, "payment");
+  assert.equal(checkout.store.moved, true);
 });
 
-test("can and matches compute from strict transition metadata and state signal values", () => {
+test("can and matches compute from strict transition metadata and status values", () => {
   const checkout = flow({
-    signals: {
-      step: state("shipping", ["shipping", "payment"]),
+    store: {
+      step: status("shipping", ["shipping", "payment"]),
       canNext: can("next"),
       inPayment: matches("payment")
     },
@@ -103,11 +103,11 @@ test("can and matches compute from strict transition metadata and state signal v
     }
   });
 
-  assert.equal(checkout.signals.canNext, true);
-  assert.equal(checkout.signals.inPayment, false);
+  assert.equal(checkout.store.canNext, true);
+  assert.equal(checkout.store.inPayment, false);
 
   checkout.next();
 
-  assert.equal(checkout.signals.canNext, false);
-  assert.equal(checkout.signals.inPayment, true);
+  assert.equal(checkout.store.canNext, false);
+  assert.equal(checkout.store.inPayment, true);
 });
