@@ -11,9 +11,9 @@ Use these docs when the README is too compact:
   computed values, resource controllers, and store unwrapping.
 - [Resource Lifecycle](resources.md): lazy and immediate resources, load,
   reload, cancel, cache writes, and snapshots.
-- [Compose And Status Helpers](compose-and-status.md): `compose`, `set`,
-  `update`, `when`, `onError`, `status`, `transition`, `guard`, `can`, and
-  `matches`.
+- [Compose And Status Helpers](compose-and-status.md): `compose`, `parallel`,
+  `remember`, `set`, `update`, `when`, `onError`, `status`, `transition`,
+  `guard`, `can`, `explain`, `describe`, and `matches`.
 
 ## API Layers
 
@@ -22,10 +22,11 @@ The package has three public layers:
 - L1 live primitives and store constructors from `@async/flow/runtime`.
 - L2 import-safe declarations from `@async/flow/define` and live Flow instances
   from top-level `flow(...)`.
-- L3 workflow helpers such as `compose`, `set`, `transition`, and `guard`.
+- L3 workflow helpers such as `compose`, `parallel`, `remember`, `set`,
+  `transition`, and `guard`.
 
 ```js
-import { compose, flow, resource, status, transition } from "@async/flow";
+import { compose, flow, parallel, remember, resource, status, transition } from "@async/flow";
 import { defineFlow, defineResource } from "@async/flow/define";
 import { createFlow, createResource, createStore } from "@async/flow/runtime";
 ```

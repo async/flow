@@ -131,3 +131,148 @@ test("can and matches compute from strict transition metadata and status values"
   assert.equal(checkout.store.canNext, false);
   assert.equal(checkout.store.inPayment, true);
 });
+
+test("flow can and explain cover unknown plain transition and conditioned events", () => {
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment", "review"]),
+      attempts: 0,
+      canNext: can("next"),
+      canNextForStep: can("step", "next")
+    },
+    on: {
+      ping() {
+        return "pong";
+      },
+      next: transition("step", [
+        {
+          from: "shipping",
+          to: "payment",
+          when(store, input) {
+            store.attempts += 1;
+            return input?.allow === true;
+          },
+          reason: "cannot_continue",
+          label: "Continue"
+        },
+        {
+          from: "payment",
+          to: "review"
+        }
+      ])
+    }
+  });
+
+  assert.equal(checkout.can("missing"), false);
+  assert.deepEqual(checkout.explain("missing"), {
+    event: "missing",
+    allowed: false,
+    reason: "unknown_event"
+  });
+  assert.equal(checkout.can("ping"), true);
+  assert.deepEqual(checkout.explain("ping"), {
+    event: "ping",
+    allowed: true,
+    reason: "plain_handler",
+    source: "handler"
+  });
+  assert.equal(checkout.can("next", { allow: false }), false);
+  assert.equal(checkout.store.attempts, 0);
+  assert.deepEqual(checkout.explain("next", { allow: false }), {
+    event: "next",
+    allowed: false,
+    reason: "cannot_continue",
+    source: "transition",
+    status: "step",
+    current: "shipping",
+    label: "Continue"
+  });
+  assert.equal(checkout.can("next", { allow: true }), true);
+  assert.deepEqual(checkout.explain("next", { allow: true }), {
+    event: "next",
+    allowed: true,
+    reason: "allowed",
+    source: "transition",
+    status: "step",
+    current: "shipping",
+    label: "Continue",
+    next: "payment"
+  });
+  assert.equal(checkout.store.canNext, false);
+  assert.equal(checkout.store.canNextForStep, false);
+
+  checkout.next({ allow: true });
+  assert.equal(checkout.store.step, "payment");
+  assert.equal(checkout.store.canNext, true);
+  assert.equal(checkout.store.canNextForStep, true);
+
+  checkout.next();
+  assert.equal(checkout.store.step, "review");
+  assert.equal(checkout.can("next"), false);
+  assert.equal(checkout.explain("next").reason, "no_matching_transition");
+});
+
+test("guarded events explain blocked and allowed outcomes with receiver helpers", () => {
+  const checkout = flow({
+    store: {
+      step: status("review", ["review", "submitted"]),
+      canSubmit: false,
+      submitted: false,
+      canSubmitNow: can("submit")
+    },
+    on: {
+      submit: guard(
+        (store, input) => {
+          store.canSubmit = true;
+          return input?.confirm === true && store.step === "review";
+        },
+        transition("step", {
+          review: "submitted"
+        }),
+        {
+          reason: "cannot_submit",
+          label: "Submit order"
+        }
+      ),
+      inspect(store, input) {
+        return [
+          this.can("submit", input),
+          this.explain("submit", input).reason,
+          this.describe().handlers
+        ];
+      }
+    }
+  });
+
+  assert.equal(checkout.can("submit", { confirm: false }), false);
+  assert.equal(checkout.store.canSubmit, false);
+  assert.deepEqual(checkout.explain("submit", { confirm: false }), {
+    event: "submit",
+    allowed: false,
+    reason: "cannot_submit",
+    source: "guard",
+    status: "step",
+    current: "review",
+    label: "Submit order"
+  });
+  assert.equal(checkout.store.canSubmitNow, false);
+  assert.deepEqual(checkout.inspect({ confirm: false }), [
+    false,
+    "cannot_submit",
+    ["submit", "inspect"]
+  ]);
+
+  assert.equal(checkout.can("submit", { confirm: true }), true);
+  assert.deepEqual(checkout.explain("submit", { confirm: true }), {
+    event: "submit",
+    allowed: true,
+    reason: "allowed",
+    source: "transition",
+    status: "step",
+    current: "review",
+    label: "Submit order",
+    next: "submitted"
+  });
+  checkout.submit({ confirm: true });
+  assert.equal(checkout.store.step, "submitted");
+});

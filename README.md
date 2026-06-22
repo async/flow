@@ -11,8 +11,9 @@ Pick the smallest layer that solves the problem:
   `createStore` when an adapter or library needs explicit refs and controllers.
 - L2 Flow: use `flow(...)` when state changes should run through named events
   and batched handlers.
-- L3 helpers: use `compose(...)`, `status(...)`, `transition(...)`, and guards
-  when a workflow benefits from reusable steps and finite status helpers.
+- L3 helpers: use `compose(...)`, `parallel(...)`, `remember(...)`,
+  `status(...)`, `transition(...)`, and guards when a workflow benefits from
+  reusable steps and finite status helpers.
 
 ## Install
 
@@ -56,7 +57,13 @@ A Flow instance combines:
 - `refs`: explicit signal, status, and computed refs for adapters.
 - `resources`: mounted async resources and their controllers.
 - `dispatch(name, input)`: event execution.
+- `can(name, input?)`: event availability checks.
+- `explain(name, input?)`: structured blocked-event reasons.
+- `describe()`: public inspection metadata for stores, resources, handlers,
+  transitions, and guards.
 - `compose([...])`: ordered handler steps from `@async/flow/compose`.
+- `parallel(...)`: fan-out/fan-in effects inside a composed handler.
+- `remember(...)`: explicit previous-value copies around scoped work.
 
 ## Store Values
 
@@ -158,29 +165,43 @@ More detail: [Resource Lifecycle](docs/resources.md).
 ## Compose And Status Workflows
 
 Use `compose(...)` for ordered steps that should share one Flow handler input.
-Each step receives `(store, input, previous)`.
+Each step receives `(store, input, previous)`. Use `parallel(...)` when one
+ordered step should run independent effects before continuing. Use
+`remember(...)` when a handler should copy previous store values into explicit
+store fields after scoped work succeeds.
 
 ```js
-import { flow, set, status, transition, when } from "@async/flow";
+import { flow, parallel, remember, set, status, transition, when } from "@async/flow";
 import { compose } from "@async/flow/compose";
 
 const checkout = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
+    previousStep: null,
     canSubmit: true,
     loading: false,
     orderId: null
   },
 
   on: {
-    next: transition("step", {
-      shipping: "payment",
-      payment: "review"
-    }),
+    next: remember(["step", "previousStep"], [
+      transition("step", {
+        shipping: "payment",
+        payment: "review"
+      })
+    ]),
 
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
+      parallel({
+        inventory(_store, input) {
+          return reserveInventory(input.form);
+        },
+        tax(_store, input) {
+          return calculateTax(input.form);
+        }
+      }),
       async (_store, input) => {
         const order = await submitOrder(input.form);
         return order.id;
@@ -199,6 +220,29 @@ flushes the current synchronous batch and resumes later steps in a fresh batch.
 That lets `loading = true` render before async work settles.
 
 More detail: [Compose And Status Helpers](docs/compose-and-status.md).
+
+## Event Availability And Inspection
+
+Flow can answer whether an event is callable now without dispatching it.
+
+```js
+checkout.can("next"); // true
+checkout.explain("submit");
+// { event: "submit", allowed: false, reason: "guard_failed", source: "guard" }
+```
+
+Use `describe()` when adapters or tests need stable public metadata:
+
+```js
+const description = checkout.describe();
+
+description.handlers; // ["next", "submit"]
+description.store.step.kind; // "status"
+description.transitions.next.status; // "step"
+```
+
+Descriptions expose names, current values, lifecycle state, and safe metadata.
+They do not expose raw handlers or predicates.
 
 ## Runtime Options
 
@@ -243,14 +287,15 @@ const appFlow = flow(
 ```
 
 Receiver capabilities include `this.store`, `this.refs`, `this.resources`,
-`this.dispatch(name, input)`, `this.after(ms, eventName, input)`, and
-`this.dispose(cleanup)`.
+`this.dispatch(name, input)`, `this.can(name, input)`,
+`this.explain(name, input)`, `this.describe()`,
+`this.after(ms, eventName, input)`, and `this.dispose(cleanup)`.
 
 ## Public Subpaths
 
 ```js
 import { flow, signal, status, computed, resource } from "@async/flow";
-import { compose } from "@async/flow/compose";
+import { compose, parallel, remember } from "@async/flow/compose";
 import { createFlow, createResource, createStore, createSignal } from "@async/flow/runtime";
 import { defineFlow, defineResource } from "@async/flow/define";
 import { createResource as createStandaloneResource } from "@async/flow/resource";

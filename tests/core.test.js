@@ -4,9 +4,12 @@ import {
   computed,
   defineFlow,
   flow,
+  guard,
+  resource,
   signal,
   status,
-  STATUS
+  STATUS,
+  transition
 } from "@async/flow";
 import {
   createComputed,
@@ -232,6 +235,78 @@ test("restore updates writable refs and recomputes computed refs", () => {
     items: [{ id: "sku_123" }],
     count: 1
   });
+});
+
+test("flow describe returns fresh public store resource handler transition and guard metadata", () => {
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment", "review"]),
+      settings: signal({ currency: "USD" }),
+      count: 0,
+      doubled: (store) => store.count * 2,
+      user: resource(async () => ({ id: "user_123" }))
+    },
+    on: {
+      next: transition("step", {
+        from: "shipping",
+        to: "payment",
+        when: (store) => store.count >= 0,
+        reason: "cannot_continue",
+        label: "Continue"
+      }),
+      submit: guard(
+        (store) => store.step === "review",
+        () => undefined,
+        {
+          reason: "cannot_submit",
+          label: "Submit"
+        }
+      )
+    }
+  });
+  const description = checkout.describe();
+
+  assert.deepEqual(description.handlers, ["next", "submit"]);
+  assert.deepEqual(description.store.step, {
+    kind: "status",
+    writable: true,
+    value: "shipping",
+    allowed: ["shipping", "payment", "review"]
+  });
+  assert.equal(description.store.doubled.kind, "computed");
+  assert.equal(description.store.doubled.writable, false);
+  assert.equal(description.store.doubled.value, 0);
+  assert.deepEqual(description.resources.user, {
+    kind: "resource",
+    status: "idle",
+    loading: false,
+    ready: false,
+    version: 0
+  });
+  assert.deepEqual(description.transitions.next, {
+    status: "step",
+    rules: [
+      {
+        conditional: true,
+        reason: "cannot_continue",
+        label: "Continue",
+        from: "shipping",
+        to: "payment"
+      }
+    ]
+  });
+  assert.deepEqual(description.guards.submit, {
+    conditional: true,
+    reason: "cannot_submit",
+    label: "Submit"
+  });
+  assert.equal(Object.hasOwn(description.transitions.next.rules[0], "when"), false);
+  assert.equal(Object.hasOwn(description.guards.submit, "predicate"), false);
+
+  description.store.settings.value.currency = "EUR";
+  description.store.step.allowed.push("done");
+  assert.equal(checkout.store.settings.currency, "USD");
+  assert.deepEqual(checkout.describe().store.step.allowed, ["shipping", "payment", "review"]);
 });
 
 test("handlers receive store input and receiver capabilities", () => {

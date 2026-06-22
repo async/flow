@@ -16,6 +16,7 @@ import { COMPOSE_BATCH, isPromiseLike } from "./compose.js";
 import { resolveScheduler } from "./scheduler.js";
 
 const TRANSITION = Symbol.for("@async/flow.transition");
+const GUARD = Symbol.for("@async/flow.guard");
 
 const RESERVED_INSTANCE_NAMES = new Set([
   "get",
@@ -23,6 +24,9 @@ const RESERVED_INSTANCE_NAMES = new Set([
   "update",
   "subscribe",
   "dispatch",
+  "can",
+  "describe",
+  "explain",
   "snapshot",
   "restore",
   "destroy",
@@ -561,6 +565,7 @@ export function createFlow(definitionOrConfig, options = {}) {
   const handlers = {};
   const rawHandlers = {};
   const transitionMetadata = new Map();
+  const guardMetadata = new Map();
   const wholeSubscribers = new Set();
   const refStops = [];
   const cleanups = new Set();
@@ -572,6 +577,10 @@ export function createFlow(definitionOrConfig, options = {}) {
   for (const [name, handler] of Object.entries(definition.on)) {
     if (handler?.[TRANSITION]) {
       transitionMetadata.set(name, handler[TRANSITION]);
+    }
+
+    if (handler?.[GUARD]) {
+      guardMetadata.set(name, handler[GUARD]);
     }
   }
 
@@ -587,7 +596,10 @@ export function createFlow(definitionOrConfig, options = {}) {
         statuses: declaredStatusNames,
         transitions: Object.fromEntries(transitionMetadata),
         handlers: Object.keys(definition.on)
-      })
+      }),
+      explain: (eventName, input, storeOverride, options) =>
+        explainEvent(eventName, input, storeOverride, options),
+      transition: (eventName) => transitionMetadata.get(eventName)
     }
   });
   const { store, refs, resources, writableNames, statusNames } = storeState;
@@ -666,6 +678,18 @@ export function createFlow(definitionOrConfig, options = {}) {
       return result;
     },
 
+    can(eventName, input) {
+      return flow.explain(eventName, input).allowed;
+    },
+
+    explain(eventName, input) {
+      return explainEvent(eventName, input);
+    },
+
+    describe() {
+      return describeFlow();
+    },
+
     snapshot() {
       return storeState.snapshot();
     },
@@ -694,6 +718,7 @@ export function createFlow(definitionOrConfig, options = {}) {
         writable: [...writableNames],
         statuses: [...statusNames],
         transitions: Object.fromEntries(transitionMetadata),
+        guards: Object.fromEntries(guardMetadata),
         store: Object.keys(refs),
         resources: Object.keys(resources),
         handlers: Object.keys(handlers)
@@ -735,6 +760,9 @@ export function createFlow(definitionOrConfig, options = {}) {
       refs,
       resources,
       dispatch: flow.dispatch.bind(flow),
+      can: flow.can.bind(flow),
+      explain: flow.explain.bind(flow),
+      describe: flow.describe.bind(flow),
       [COMPOSE_BATCH](fn) {
         return runFlowBatch(name, input, fn);
       },
@@ -775,6 +803,199 @@ export function createFlow(definitionOrConfig, options = {}) {
     return {
       ...receiver,
       ...extra
+    };
+  }
+
+  function describeFlow() {
+    return {
+      store: describeStore(),
+      resources: describeResources(),
+      handlers: Object.keys(handlers),
+      transitions: describeTransitions(),
+      guards: describeGuards()
+    };
+  }
+
+  function describeStore() {
+    const description = {};
+
+    for (const [name, ref] of Object.entries(refs)) {
+      const entry = {
+        kind: ref.kind,
+        writable: writableNames.has(name),
+        value: cloneInspectable(store[name])
+      };
+
+      if (ref?.[STATUS] && Array.isArray(ref.allowed)) {
+        entry.allowed = cloneInspectable(ref.allowed);
+      }
+
+      description[name] = entry;
+    }
+
+    return description;
+  }
+
+  function describeResources() {
+    const description = {};
+
+    for (const [name, resource] of Object.entries(resources)) {
+      description[name] = {
+        kind: "resource",
+        status: resource.status,
+        loading: resource.loading,
+        ready: resource.ready,
+        version: resource.version
+      };
+    }
+
+    return description;
+  }
+
+  function describeTransitions() {
+    const description = {};
+
+    for (const [eventName, metadata] of transitionMetadata.entries()) {
+      description[eventName] = {
+        status: metadata.status,
+        rules: metadata.rules.map(describeTransitionRule)
+      };
+    }
+
+    return description;
+  }
+
+  function describeGuards() {
+    const description = {};
+
+    for (const [eventName, metadata] of guardMetadata.entries()) {
+      description[eventName] = {
+        conditional: true,
+        ...copyPublicMetadata(metadata)
+      };
+    }
+
+    return description;
+  }
+
+  function explainEvent(eventName, input, storeOverride = store, options = {}) {
+    if (typeof eventName !== "string" || eventName.length === 0 || !Object.hasOwn(definition.on, eventName)) {
+      return {
+        event: eventName,
+        allowed: false,
+        reason: "unknown_event"
+      };
+    }
+
+    const requiredStatus = options?.statusName;
+    const transition = transitionMetadata.get(eventName);
+    const guard = guardMetadata.get(eventName);
+
+    if (requiredStatus !== undefined && transition?.status !== requiredStatus) {
+      return {
+        event: eventName,
+        allowed: false,
+        reason: "no_matching_transition",
+        source: "transition",
+        status: requiredStatus
+      };
+    }
+
+    if (!transition && !guard) {
+      return {
+        event: eventName,
+        allowed: true,
+        reason: "plain_handler",
+        source: "handler"
+      };
+    }
+
+    const readonlyStore = createReadonlyStoreView(storeOverride);
+
+    if (guard && !guard.predicate(readonlyStore, input, undefined)) {
+      return {
+        event: eventName,
+        allowed: false,
+        reason: guard.reason ?? "guard_failed",
+        source: "guard",
+        ...describeCurrentTransitionState(transition, storeOverride),
+        ...copyPublicMetadata(guard)
+      };
+    }
+
+    if (!transition) {
+      return {
+        event: eventName,
+        allowed: true,
+        reason: "allowed",
+        source: "guard",
+        ...copyPublicLabel(guard)
+      };
+    }
+
+    const transitionResult = explainTransition(eventName, transition, input, storeOverride, readonlyStore);
+    if (!transitionResult.allowed) {
+      return transitionResult;
+    }
+
+    return {
+      ...transitionResult,
+      ...(guard ? copyPublicLabel(guard) : {})
+    };
+  }
+
+  function explainTransition(eventName, transition, input, sourceStore, readonlyStore) {
+    const current = sourceStore[transition.status];
+    let firstConditionFailure;
+
+    for (const rule of transition.rules) {
+      if (!matchesTransitionFrom(rule.from, current)) {
+        continue;
+      }
+
+      if (typeof rule.when === "function" && !rule.when(readonlyStore, input, undefined)) {
+        firstConditionFailure ??= rule;
+        continue;
+      }
+
+      const result = {
+        event: eventName,
+        allowed: true,
+        reason: "allowed",
+        source: "transition",
+        status: transition.status,
+        current: cloneInspectable(current),
+        ...copyPublicLabel(rule)
+      };
+
+      if (typeof rule.to === "function") {
+        result.dynamic = true;
+      } else {
+        result.next = cloneInspectable(rule.to);
+      }
+
+      return result;
+    }
+
+    if (firstConditionFailure) {
+      return {
+        event: eventName,
+        allowed: false,
+        reason: firstConditionFailure.reason ?? "transition_condition_failed",
+        source: "transition",
+        status: transition.status,
+        current: cloneInspectable(current),
+        ...copyPublicMetadata(firstConditionFailure)
+      };
+    }
+
+    return {
+      event: eventName,
+      allowed: false,
+      reason: "no_matching_transition",
+      source: "transition",
+      status: transition.status,
+      current: cloneInspectable(current)
     };
   }
 
@@ -943,6 +1164,123 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
       }
     }
   );
+}
+
+function describeTransitionRule(rule) {
+  const description = {
+    conditional: typeof rule.when === "function",
+    ...copyPublicMetadata(rule)
+  };
+
+  if (rule.from !== undefined) {
+    description.from = cloneInspectable(rule.from);
+  }
+
+  if (typeof rule.to === "function") {
+    description.dynamic = true;
+  } else {
+    description.to = cloneInspectable(rule.to);
+  }
+
+  return description;
+}
+
+function copyPublicMetadata(source) {
+  const metadata = {};
+
+  if (typeof source?.reason === "string") {
+    metadata.reason = source.reason;
+  }
+
+  if (typeof source?.label === "string") {
+    metadata.label = source.label;
+  }
+
+  return metadata;
+}
+
+function copyPublicLabel(source) {
+  return typeof source?.label === "string"
+    ? { label: source.label }
+    : {};
+}
+
+function describeCurrentTransitionState(transition, store) {
+  if (!transition) {
+    return {};
+  }
+
+  return {
+    status: transition.status,
+    current: cloneInspectable(store[transition.status])
+  };
+}
+
+function createReadonlyStoreView(store) {
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        return cloneInspectable(store[prop]);
+      },
+      set() {
+        return true;
+      },
+      has(_target, prop) {
+        return prop in store;
+      },
+      ownKeys() {
+        return Reflect.ownKeys(store);
+      },
+      getOwnPropertyDescriptor(_target, prop) {
+        const descriptor = Object.getOwnPropertyDescriptor(store, prop);
+        if (!descriptor) {
+          return undefined;
+        }
+
+        return {
+          configurable: true,
+          enumerable: descriptor.enumerable
+        };
+      }
+    }
+  );
+}
+
+function matchesTransitionFrom(from, current) {
+  if (from === undefined) {
+    return true;
+  }
+
+  return Array.isArray(from)
+    ? from.some((value) => Object.is(value, current))
+    : Object.is(from, current);
+}
+
+function cloneInspectable(value) {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back to a small structural clone for common inspectable values.
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(cloneInspectable);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, entry]) => [name, cloneInspectable(entry)])
+    );
+  }
+
+  return value;
 }
 
 function isComputedDeclaration(value) {

@@ -72,6 +72,8 @@ Choose L2 when:
 - Handlers need `this.dispatch(...)`, `this.after(...)`, `this.resources`, or
   injected runtime context.
 - The code needs a stable public surface for adapters or framework wrappers.
+- UI controls or adapters need `can(...)`, `explain(...)`, or `describe()`
+  without dispatching events.
 
 ## L3: Workflow Helpers
 
@@ -80,26 +82,37 @@ statechart runtime. The helpers keep the same store-first shape and can be mixed
 with handwritten handlers.
 
 ```js
-import { flow, set, status, transition, when } from "@async/flow";
+import { flow, parallel, remember, set, status, transition, when } from "@async/flow";
 import { compose } from "@async/flow/compose";
 
 const checkout = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
+    previousStep: null,
     canSubmit: true,
     loading: false,
     orderId: null
   },
 
   on: {
-    next: transition("step", {
-      shipping: "payment",
-      payment: "review"
-    }),
+    next: remember(["step", "previousStep"], [
+      transition("step", {
+        shipping: "payment",
+        payment: "review"
+      })
+    ]),
 
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
+      parallel({
+        inventory(_store, input) {
+          return reserveInventory(input);
+        },
+        tax(_store, input) {
+          return calculateTax(input);
+        }
+      }),
       async (_store, input) => {
         const order = await saveOrder(input);
         return order.id;
@@ -118,6 +131,10 @@ Choose L3 when:
 - Several handlers share the same step pattern.
 - A finite status value drives user-visible workflow state.
 - Async work needs a synchronous loading segment before promise resolution.
+- Independent effects should run at the same ordered point before the handler
+  continues.
+- Previous store values should be copied into explicit store fields around a
+  scoped transition or save step.
 - The workflow should read as small reusable steps instead of one long handler.
 
 ## Moving Up The Layers

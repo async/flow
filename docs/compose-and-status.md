@@ -4,26 +4,37 @@
 `@async/flow/compose`.
 
 ```js
-import { flow, set, status, transition, when } from "@async/flow";
+import { flow, parallel, remember, set, status, transition, when } from "@async/flow";
 import { compose } from "@async/flow/compose";
 
 const checkout = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
+    previousStep: null,
     canSubmit: true,
     loading: false,
     orderId: null
   },
 
   on: {
-    next: transition("step", {
-      shipping: "payment",
-      payment: "review"
-    }),
+    next: remember(["step", "previousStep"], [
+      transition("step", {
+        shipping: "payment",
+        payment: "review"
+      })
+    ]),
 
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
+      parallel({
+        inventory(_store, input) {
+          return reserveInventory(input.form);
+        },
+        tax(_store, input) {
+          return calculateTax(input.form);
+        }
+      }),
       async (_store, input) => {
         const order = await submitOrder(input.form);
         return order.id;
@@ -125,6 +136,55 @@ When a composed step returns a plain object as service data instead of store
 updates, map it to a primitive or write it into the store before the composed
 handler finishes.
 
+`parallel(branches)` runs independent branch steps at the same point in a
+composed handler, waits for every async branch, and returns `undefined`.
+
+```js
+compose([
+  set({ refreshing: true, error: null }),
+  parallel({
+    user() {
+      return this.resources.user.reload();
+    },
+    cart() {
+      return this.resources.cart.reload();
+    }
+  }),
+  set("refreshing", false)
+]);
+```
+
+Use `parallel(...)` for effect fan-out/fan-in. It does not create parallel
+state regions and it does not collect branch results by default.
+
+`remember(mapping, steps)` captures source store values before scoped work and
+writes those captured values to explicit target fields after the scoped work
+succeeds, but only when a source changed.
+
+```js
+remember(["step", "previousStep"], [
+  transition("step", {
+    shipping: "payment",
+    payment: "review"
+  })
+]);
+```
+
+Multiple mappings are supported:
+
+```js
+remember([
+  ["step", "previousStep"],
+  ["mode", "previousMode"]
+], [
+  transition("step", { shipping: "payment" }),
+  set("mode", "editing")
+]);
+```
+
+`remember(...)` stores previous values in author-chosen fields. It does not add
+hidden history, rollback, or transaction behavior.
+
 ## Status Helpers
 
 `status(initial, allowed?)` declares a writable finite status value.
@@ -157,10 +217,88 @@ Missing matches are no-ops.
 `can(statusName, eventName)` computes whether a transition handler can move
 from the current status.
 
+`can(eventName)` computes whether an event is available now. It infers the
+status metadata from the event instead of repeating the status name.
+
+```js
+const checkout = flow({
+  store: {
+    step: status("shipping", ["shipping", "payment", "review"]),
+    canAdvance: can("next")
+  },
+  on: {
+    next: transition("step", {
+      shipping: "payment",
+      payment: "review"
+    })
+  }
+});
+```
+
 `matches(statusName, value)` computes whether the current status matches a
 value.
 
 `guard(predicate, handler)` skips the handler when the predicate is false.
+
+`flow.can(eventName, input?)` and receiver `this.can(eventName, input?)` return
+the same event availability boolean without dispatching the event.
+
+```js
+checkout.can("next"); // true
+checkout.can("submit", { confirm: true });
+```
+
+`flow.explain(eventName, input?)` and receiver
+`this.explain(eventName, input?)` return stable reason data for allowed and
+blocked events. Applications should map reason codes to user-facing text.
+
+```js
+checkout.explain("submit");
+// {
+//   event: "submit",
+//   allowed: false,
+//   reason: "guard_failed",
+//   source: "guard"
+// }
+```
+
+Built-in reason codes are:
+
+```text
+unknown_event
+allowed
+plain_handler
+no_matching_transition
+transition_condition_failed
+guard_failed
+```
+
+Transition rules and guards may carry `reason` and `label` metadata:
+
+```js
+guard(
+  (store) => store.step === "review" && store.canSubmit,
+  transition("step", { review: "submitted" }),
+  {
+    reason: "cannot_submit",
+    label: "Submit order"
+  }
+);
+```
+
+`flow.describe()` and receiver `this.describe()` return public inspection data
+for store entries, resources, handlers, transitions, and guards.
+
+```js
+const description = checkout.describe();
+
+description.handlers; // ["next", "submit"]
+description.store.step.kind; // "status"
+description.transitions.next.status; // "step"
+```
+
+Descriptions are fresh snapshots for inspection. They do not expose raw handler
+functions, guard predicates, or transition condition functions.
 
 Live status refs carry the exported `STATUS` symbol, backed by
 `Symbol.for("@async/flow.status")`.

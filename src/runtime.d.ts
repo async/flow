@@ -59,11 +59,58 @@ export type FlowChange = {
   store: Record<string, unknown>;
 };
 
+export type FlowStoreDescriptionEntry = {
+  kind: string;
+  writable: boolean;
+  value: unknown;
+  allowed?: readonly unknown[];
+};
+
+export type FlowResourceDescription = {
+  kind: "resource";
+  status: "idle" | "loading" | "ready" | "error";
+  loading: boolean;
+  ready: boolean;
+  version: number;
+};
+
+export type FlowTransitionRuleDescription = {
+  from?: unknown;
+  to?: unknown;
+  dynamic?: boolean;
+  conditional: boolean;
+  reason?: string;
+  label?: string;
+};
+
+export type FlowDescription = {
+  store: Record<string, FlowStoreDescriptionEntry>;
+  resources: Record<string, FlowResourceDescription>;
+  handlers: string[];
+  transitions: Record<string, { status: string; rules: FlowTransitionRuleDescription[] }>;
+  guards: Record<string, { conditional: true; reason?: string; label?: string }>;
+};
+
+export type FlowEventExplanation = {
+  event: unknown;
+  allowed: boolean;
+  reason: string;
+  source?: "handler" | "transition" | "guard";
+  status?: string;
+  current?: unknown;
+  next?: unknown;
+  dynamic?: boolean;
+  label?: string;
+};
+
 export type FlowHandlerReceiver = {
   store: Record<string, unknown>;
   refs: Record<string, SignalLike>;
   resources: Record<string, unknown>;
   dispatch(name: string, input?: unknown): unknown | PromiseLike<unknown>;
+  can(eventName: string, input?: unknown): boolean;
+  explain(eventName: string, input?: unknown): FlowEventExplanation;
+  describe(): FlowDescription;
   after(ms: number, eventName: string, input?: unknown): number;
   dispose(cleanup: () => void): () => boolean;
 } & Record<string, unknown>;
@@ -93,6 +140,9 @@ export type FlowInstance = {
   subscribe(name: string, fn: (value: unknown) => void): () => void;
   subscribe(fn: (change: FlowChange) => void): () => void;
   dispatch(name: string, input?: unknown): unknown | PromiseLike<unknown>;
+  can(eventName: string, input?: unknown): boolean;
+  explain(eventName: string, input?: unknown): FlowEventExplanation;
+  describe(): FlowDescription;
   snapshot(): Record<string, unknown>;
   restore(snapshot: Record<string, unknown>): void;
   destroy(): void;

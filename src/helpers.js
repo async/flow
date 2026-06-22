@@ -77,7 +77,7 @@ export function onError(handle, handler) {
   return onErrorStep;
 }
 
-export function guard(predicate, handler) {
+export function guard(predicate, handler, options) {
   if (typeof predicate !== "function") {
     throw new TypeError("guard(...) requires a predicate function.");
   }
@@ -85,6 +85,8 @@ export function guard(predicate, handler) {
   if (typeof handler !== "function") {
     throw new TypeError("guard(...) requires a handler function.");
   }
+
+  const metadata = normalizeMetadataOptions(options, "guard");
 
   const guardStep = function guardStep(store, input, previous) {
     if (!predicate.call(this, store, input, previous)) {
@@ -98,7 +100,8 @@ export function guard(predicate, handler) {
   Object.defineProperty(guardStep, GUARD, {
     configurable: true,
     value: {
-      predicate
+      predicate,
+      ...metadata
     }
   });
   return guardStep;
@@ -134,20 +137,25 @@ export function transition(statusName, config) {
   return transitionStep;
 }
 
-export function can(statusName, eventName) {
-  assertStatusName(statusName, "can");
+export function can(statusNameOrEventName, eventName) {
+  if (arguments.length === 1) {
+    assertEventName(statusNameOrEventName, "can");
+    return defineComputed((store, context) =>
+      Boolean(context?.explain?.(statusNameOrEventName, undefined, store)?.allowed)
+    );
+  }
+
+  assertStatusName(statusNameOrEventName, "can");
   if (typeof eventName !== "string" || eventName.length === 0) {
     throw new TypeError("can(...) requires an event name.");
   }
 
   return defineComputed((store, context) => {
-    const metadata = context?.describe?.().transitions?.[eventName];
-    if (!metadata || metadata.status !== statusName) {
-      return false;
-    }
+    const explanation = context?.explain?.(eventName, undefined, store, {
+      statusName: statusNameOrEventName
+    });
 
-    const current = store[statusName];
-    return metadata.rules.some((entry) => transitionRuleMatches(entry, current, store));
+    return Boolean(explanation?.allowed);
   });
 }
 
@@ -161,6 +169,12 @@ export function matches(statusName, value) {
 function assertStatusName(value, helperName) {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${helperName}(...) requires a status name.`);
+  }
+}
+
+function assertEventName(value, helperName) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${helperName}(...) requires an event name.`);
   }
 }
 
@@ -202,10 +216,13 @@ function normalizeTransitionRule(rule) {
     throw new TypeError('transition(...) rule "when" must be a function.');
   }
 
+  const metadata = normalizeMetadataOptions(rule, "transition");
+
   return {
     from: rule.from,
     to: rule.to,
-    when: rule.when
+    when: rule.when,
+    ...metadata
   };
 }
 
@@ -250,4 +267,34 @@ function copyFlowMetadata(source, target) {
       value: source[GUARD]
     });
   }
+}
+
+function normalizeMetadataOptions(options, helperName) {
+  if (options === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(options)) {
+    throw new TypeError(`${helperName}(...) metadata options must be an object.`);
+  }
+
+  const metadata = {};
+
+  if (Object.hasOwn(options, "reason")) {
+    if (typeof options.reason !== "string" || options.reason.length === 0) {
+      throw new TypeError(`${helperName}(...) reason must be a non-empty string.`);
+    }
+
+    metadata.reason = options.reason;
+  }
+
+  if (Object.hasOwn(options, "label")) {
+    if (typeof options.label !== "string" || options.label.length === 0) {
+      throw new TypeError(`${helperName}(...) label must be a non-empty string.`);
+    }
+
+    metadata.label = options.label;
+  }
+
+  return metadata;
 }

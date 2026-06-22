@@ -28,6 +28,8 @@ export {
 } from "./runtime.js";
 export {
   compose,
+  parallel,
+  remember,
   isPromiseLike
 } from "./compose.js";
 export {
