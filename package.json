@@ -82,6 +82,7 @@
   },
   "files": [
     "CHANGELOG.md",
+    "docs",
     "LICENSE",
     "README.md",
     "src"

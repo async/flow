@@ -1,14 +1,9 @@
 # @async/flow
 
-Portable signal state and handler runtime for Async packages.
+Portable store, resource, and handler runtime for Async packages.
 
-Flow is a small store and event layer. A Flow instance combines:
-
-- `store`: author-facing values with getter/setter behavior.
-- `refs`: explicit signal, status, and computed refs for adapters.
-- `resources`: mounted resource instances for higher-level integrations.
-- `dispatch(name, input)`: event execution.
-- `compose([...])`: ordered handler steps.
+Flow is useful when an app needs signal-like state, event handlers, async
+resources, and small workflow helpers without adopting a full statechart engine.
 
 ## Install
 
@@ -16,7 +11,49 @@ Flow is a small store and event layer. A Flow instance combines:
 pnpm add @async/flow
 ```
 
-## Store And Dispatch
+## Quick Start
+
+```js
+import { flow, status } from "@async/flow";
+
+const counter = flow({
+  store: {
+    count: 0,
+    phase: status("idle", ["idle", "active"])
+  },
+
+  on: {
+    increment(store, input = {}) {
+      store.count += input.by ?? 1;
+      store.phase = "active";
+    },
+
+    reset(store) {
+      store.count = 0;
+      store.phase = "idle";
+    }
+  }
+});
+
+counter.dispatch("increment", { by: 2 });
+
+counter.store.count; // 2
+counter.refs.phase.get(); // "active"
+```
+
+A Flow instance combines:
+
+- `store`: author-facing values with getter/setter behavior.
+- `refs`: explicit signal, status, and computed refs for adapters.
+- `resources`: mounted async resources and their controllers.
+- `dispatch(name, input)`: event execution.
+- `compose([...])`: ordered handler steps from `@async/flow/compose`.
+
+## Store Values
+
+Plain primitives and arrays become writable store refs. Computed values are
+read-only. Plain record values stay explicit; use `signal(value)` when an object
+should be a single writable value.
 
 ```js
 import { computed, flow, signal, status } from "@async/flow";
@@ -24,7 +61,7 @@ import { computed, flow, signal, status } from "@async/flow";
 const cart = flow({
   store: {
     items: [],
-    selectedId: signal(null),
+    settings: signal({ currency: "USD" }),
     count: (store) => store.items.length,
     isEmpty: computed((store) => store.count === 0),
     phase: status("idle", ["idle", "ready"])
@@ -34,10 +71,6 @@ const cart = flow({
     add(store, input) {
       store.items = [...store.items, input.item];
       store.phase = "ready";
-    },
-
-    select(store, input) {
-      this.refs.selectedId.set(input.id);
     }
   }
 });
@@ -46,49 +79,14 @@ cart.dispatch("add", { item: { id: "sku_123" } });
 
 cart.store.count; // 1
 cart.refs.items.get(); // [{ id: "sku_123" }]
-cart.store.phase = "idle";
+cart.store.settings = { currency: "EUR" };
 ```
-
-Plain primitive and array values become writable store refs. Computed values are
-read-only. Plain record values are intentionally explicit; wrap them with
-`signal(value)` when the object should be a single writable value.
-
-```js
-const settingsFlow = flow({
-  store: {
-    settings: signal({ theme: "dark" })
-  }
-});
-```
-
-## Native Store
-
-Use `createStore(...)` when state is needed without event dispatch.
-
-```js
-import { createStore } from "@async/flow/runtime";
-import { computed, status } from "@async/flow";
-
-const state = createStore({
-  count: 0,
-  doubled: computed((store) => store.count * 2),
-  phase: status("idle", ["idle", "loading", "ready"])
-});
-
-state.store.count += 1;
-state.store.doubled; // 2
-state.refs.phase.set("loading");
-state.snapshot();
-```
-
-The store proxy unwraps signal-like entries for reads and writes through writable
-refs for assignments. Computed entries reject writes.
 
 ## Resources
 
 `resource(loader)` declares a lazy async value with lifecycle state and explicit
-controls. The loader receives the current store plus tools containing a native
-abort signal, the load input, and the resource version.
+controls. The loader receives the store plus tools containing a native abort
+signal, the load input, and the resource version.
 
 ```js
 import { flow, resource } from "@async/flow";
@@ -107,28 +105,24 @@ const greeting = flow({
       return store.greeting.load();
     },
 
-    retry(store) {
+    reload(store) {
       return store.greeting.reload();
     },
 
-    cancel(store) {
-      return store.greeting.cancel();
+    cancel(store, reason) {
+      return store.greeting.cancel(reason);
     }
   }
 });
-```
 
-Lazy resources stay as resource objects in the store:
-
-```js
-greeting.store.greeting.status; // "idle"
 await greeting.dispatch("fetch");
+
+greeting.store.greeting.status; // "ready"
 greeting.store.greeting.value; // loaded text
 ```
 
-`resource({ immediate: true }, loader)` starts loading when the Flow is created
-and reads as a value through `store`. The controller is always available through
-`flow.resources.name` and `this.resources.name`.
+Lazy resources stay as controller objects in `store`. Immediate resources read
+as values through `store` and keep their controller under `flow.resources`.
 
 ```js
 const profile = flow({
@@ -150,18 +144,67 @@ profile.store.user; // current value
 profile.resources.user.status; // "loading", "ready", or "error"
 ```
 
-Resources expose `value`, `status`, `loading`, `ready`, `error`, `version`,
-`load(input)`, `reload(input)`, `set(value)`, and `cancel(reason)`. Resource
-store assignment is intentionally rejected; use resource methods for async side
-effects and cache writes.
+More detail: [Resource Lifecycle](docs/resources.md).
 
-## Handlers
+## Compose And Status Workflows
 
-Handlers receive `(store, input)`. Runtime capabilities are available through
-the receiver for method syntax and normal functions.
+Use `compose(...)` for ordered steps that should share one Flow handler input.
+Each step receives `(store, input, previous)`.
 
 ```js
-const counter = flow(
+import { flow, set, status, transition, when } from "@async/flow";
+import { compose } from "@async/flow/compose";
+
+const checkout = flow({
+  store: {
+    step: status("shipping", ["shipping", "payment", "review"]),
+    canSubmit: true,
+    loading: false,
+    orderId: null
+  },
+
+  on: {
+    next: transition("step", {
+      shipping: "payment",
+      payment: "review"
+    }),
+
+    submit: compose([
+      when((store) => store.step === "review" && store.canSubmit),
+      set("loading", true),
+      async (_store, input) => submitOrder(input.form),
+      (store, _input, order) => {
+        store.orderId = order.id;
+      },
+      set("loading", false)
+    ])
+  }
+});
+```
+
+`compose` stays synchronous until a step returns a promise-like value. Flow then
+flushes the current synchronous batch and resumes later steps in a fresh batch.
+That lets `loading = true` render before async work settles.
+
+More detail: [Compose And Status Helpers](docs/compose-and-status.md).
+
+## Runtime Options
+
+The top-level authoring helper accepts either config or options plus config.
+
+```js
+flow(config);
+flow({ scheduler, context }, config);
+```
+
+With two arguments, the first object is always runtime options and the second is
+always Flow config.
+
+Handlers receive `(store, input)`. Runtime capabilities are available through
+method syntax or normal functions:
+
+```js
+const appFlow = flow(
   {
     context() {
       return { logger: console };
@@ -187,105 +230,28 @@ const counter = flow(
 );
 ```
 
-Receiver capabilities include:
-
-- `this.store`
-- `this.refs`
-- `this.resources`
-- `this.dispatch(name, input)`
-- `this.after(ms, eventName, input)`
-- `this.dispose(cleanup)`
-
-Arrow handlers work when they only need `(store, input)`.
-
-## Compose
-
-`compose(fn)` and `compose([fn, ...])` return normal handler functions. Each step
-receives `(store, input, previous)`. `input` is the stable dispatch input.
-`previous` starts as `undefined` and becomes the last non-`undefined` value
-returned by an earlier step.
-
-```js
-import { compose } from "@async/flow/compose";
-import { flow, set, update, when } from "@async/flow";
-
-const checkout = flow({
-  store: {
-    canSubmit: true,
-    loading: false,
-    orderId: null
-  },
-
-  on: {
-    submit: compose([
-      when((store) => store.canSubmit),
-      set("loading", true),
-      async (_store, input) => ({
-        loading: false,
-        orderId: input.orderId
-      })
-    ])
-  }
-});
-```
-
-Returned plain objects are applied as store updates by Flow. Helper functions
-such as `set`, `update`, `when`, `guard`, `onError`, `transition`, `can`, and
-`matches` use the same store-first handler shape.
-
-## Status Values
-
-`status(initial, allowed?)` declares a writable finite status value. Allowed
-values are validated when provided.
-
-```js
-import { flow, status, transition } from "@async/flow";
-
-const order = flow({
-  store: {
-    step: status("shipping", ["shipping", "payment", "review"])
-  },
-
-  on: {
-    next: transition("step", {
-      shipping: "payment",
-      payment: "review"
-    })
-  }
-});
-```
-
-Live status refs carry `Symbol.for("@async/flow.status")` and expose the same
-getter, setter, updater, subscriber, and snapshot methods as writable signal
-refs.
-
-## Runtime Options
-
-The top-level authoring helper accepts either a config or options plus config.
-
-```js
-flow(config);
-flow({ scheduler, context }, config);
-```
-
-With two arguments, the first object is always runtime options and the second is
-always Flow config. One-argument calls are always config.
-
-The lower-level constructor keeps the explicit order:
-
-```js
-createFlow(definitionOrConfig, { scheduler, context });
-```
+Receiver capabilities include `this.store`, `this.refs`, `this.resources`,
+`this.dispatch(name, input)`, `this.after(ms, eventName, input)`, and
+`this.dispose(cleanup)`.
 
 ## Public Subpaths
 
 ```js
-import { flow, signal, status, computed } from "@async/flow";
+import { flow, signal, status, computed, resource } from "@async/flow";
+import { compose } from "@async/flow/compose";
 import { createFlow, createResource, createStore, createSignal } from "@async/flow/runtime";
 import { defineFlow, defineResource } from "@async/flow/define";
-import { resource } from "@async/flow/resource";
-import { compose } from "@async/flow/compose";
+import { createResource as createStandaloneResource } from "@async/flow/resource";
 ```
+
+The old `@async/flow/run` subpath is not public. Use
+`@async/flow/compose`.
+
+## Docs
+
+- [Docs Index](docs/README.md)
+- [Resource Lifecycle](docs/resources.md)
+- [Compose And Status Helpers](docs/compose-and-status.md)
 
 ## Package Checks
 
