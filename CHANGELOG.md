@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 - 2026-06-22
+
+- Added the L3 Flow API refresh around `store`, `status`, `resource`,
+  `dispatch`, and `compose`.
+- Added lazy and immediate resources with `load`, `reload`, `cancel`, `set`,
+  status, snapshots, and native abort-signal support.
+- Added status-first workflow helpers for `transition`, `guard`, `can`, and
+  `matches`, plus composed handler batching across async boundaries.
+- Removed the runner subpath in favor of `@async/flow/compose`.
+- Added package docs for L1 primitives, L2 Flow events, L3 workflow helpers,
+  store unwrapping, signals, computed values, status refs, and resources.
+
 ## 0.1.0 - 2026-06-22
 
 - Added the initial `@async/flow` package with portable signal refs, computed
