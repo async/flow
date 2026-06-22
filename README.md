@@ -84,6 +84,77 @@ state.snapshot();
 The store proxy unwraps signal-like entries for reads and writes through writable
 refs for assignments. Computed entries reject writes.
 
+## Resources
+
+`resource(loader)` declares a lazy async value with lifecycle state and explicit
+controls. The loader receives the current store plus tools containing a native
+abort signal, the load input, and the resource version.
+
+```js
+import { flow, resource } from "@async/flow";
+
+const greeting = flow({
+  store: {
+    name: "World",
+    greeting: resource(async (store, { signal }) => {
+      const response = await fetch(`/api/greeting/${store.name}`, { signal });
+      return response.text();
+    })
+  },
+
+  on: {
+    fetch(store) {
+      return store.greeting.load();
+    },
+
+    retry(store) {
+      return store.greeting.reload();
+    },
+
+    cancel(store) {
+      return store.greeting.cancel();
+    }
+  }
+});
+```
+
+Lazy resources stay as resource objects in the store:
+
+```js
+greeting.store.greeting.status; // "idle"
+await greeting.dispatch("fetch");
+greeting.store.greeting.value; // loaded text
+```
+
+`resource({ immediate: true }, loader)` starts loading when the Flow is created
+and reads as a value through `store`. The controller is always available through
+`flow.resources.name` and `this.resources.name`.
+
+```js
+const profile = flow({
+  store: {
+    user: resource({ immediate: true }, async (_store, { signal }) => {
+      const response = await fetch("/api/user", { signal });
+      return response.json();
+    })
+  },
+
+  on: {
+    refreshUser() {
+      return this.resources.user.reload();
+    }
+  }
+});
+
+profile.store.user; // current value
+profile.resources.user.status; // "loading", "ready", or "error"
+```
+
+Resources expose `value`, `status`, `loading`, `ready`, `error`, `version`,
+`load(input)`, `reload(input)`, `set(value)`, and `cancel(reason)`. Resource
+store assignment is intentionally rejected; use resource methods for async side
+effects and cache writes.
+
 ## Handlers
 
 Handlers receive `(store, input)`. Runtime capabilities are available through
@@ -210,8 +281,9 @@ createFlow(definitionOrConfig, { scheduler, context });
 
 ```js
 import { flow, signal, status, computed } from "@async/flow";
-import { createFlow, createStore, createSignal } from "@async/flow/runtime";
-import { defineFlow } from "@async/flow/define";
+import { createFlow, createResource, createStore, createSignal } from "@async/flow/runtime";
+import { defineFlow, defineResource } from "@async/flow/define";
+import { resource } from "@async/flow/resource";
 import { compose } from "@async/flow/compose";
 ```
 

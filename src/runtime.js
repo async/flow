@@ -8,6 +8,7 @@ import {
   isComputedDefinition,
   isFlowDefinition,
   isPlainObject,
+  isResourceDefinition,
   isSignalDefinition,
   isStatusDefinition
 } from "./define.js";
@@ -228,6 +229,223 @@ export function createComputed(compute, options = {}) {
   return ref;
 }
 
+export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
+  const { options, loader, runtimeOptions } = normalizeCreateResourceArgs(
+    optionsOrLoader,
+    maybeLoader,
+    maybeRuntimeOptions
+  );
+  const scheduler = resolveScheduler(runtimeOptions);
+  const subscribers = new Set();
+  const store = runtimeOptions.store ?? {};
+  let status = "idle";
+  let value;
+  let hasValue = false;
+  let error;
+  let version = 0;
+  let currentRun;
+
+  const resource = {
+    [RESOURCE]: true,
+    kind: "resource",
+
+    get value() {
+      return value;
+    },
+
+    get status() {
+      return status;
+    },
+
+    get loading() {
+      return status === "loading";
+    },
+
+    get ready() {
+      return status === "ready";
+    },
+
+    get error() {
+      return error;
+    },
+
+    get version() {
+      return version;
+    },
+
+    load(input) {
+      if (currentRun) {
+        return currentRun.promise;
+      }
+
+      if (status === "ready") {
+        return value;
+      }
+
+      return startRun(input);
+    },
+
+    reload(input) {
+      if (currentRun) {
+        cancelCurrentRun();
+      }
+
+      return startRun(input);
+    },
+
+    set(next) {
+      if (currentRun) {
+        cancelCurrentRun();
+      }
+
+      value = next;
+      hasValue = true;
+      error = undefined;
+      version += 1;
+      setStatus("ready");
+      return value;
+    },
+
+    cancel(reason) {
+      if (!currentRun) {
+        return status;
+      }
+
+      cancelCurrentRun(reason);
+      settleCanceledRun();
+      return status;
+    },
+
+    subscribe(fn) {
+      if (typeof fn !== "function") {
+        throw new TypeError("Resource subscriber must be a function.");
+      }
+
+      subscribers.add(fn);
+      return () => subscribers.delete(fn);
+    },
+
+    snapshot() {
+      return {
+        value,
+        status,
+        error,
+        version
+      };
+    },
+
+    restore(snapshot) {
+      if (isPlainObject(snapshot) && Object.hasOwn(snapshot, "value")) {
+        value = snapshot.value;
+        hasValue = snapshot.status === "ready" || snapshot.value !== undefined;
+        error = snapshot.error;
+        version = Number.isInteger(snapshot.version) && snapshot.version >= 0
+          ? snapshot.version
+          : version + 1;
+        setStatus(normalizeRestoredStatus(snapshot.status, hasValue));
+        return;
+      }
+
+      resource.set(snapshot);
+    }
+  };
+
+  if (options.immediate === true) {
+    Object.defineProperty(resource, RESOURCE_IMMEDIATE, {
+      configurable: false,
+      enumerable: false,
+      value: true
+    });
+  }
+
+  if (options.immediate === true) {
+    resource.load();
+  }
+
+  return resource;
+
+  function startRun(input) {
+    const controller = new AbortController();
+    const runVersion = version + 1;
+    const run = {
+      controller,
+      version: runVersion,
+      promise: undefined
+    };
+
+    currentRun = run;
+    version = runVersion;
+    error = undefined;
+    setStatus("loading");
+
+    run.promise = Promise.resolve()
+      .then(() =>
+        loader(store, {
+          signal: controller.signal,
+          input,
+          version: runVersion
+        })
+      )
+      .then((next) => {
+        if (currentRun !== run) {
+          return next;
+        }
+
+        currentRun = undefined;
+        value = next;
+        hasValue = true;
+        error = undefined;
+        setStatus("ready");
+        return value;
+      })
+      .catch((reason) => {
+        if (currentRun !== run) {
+          throw reason;
+        }
+
+        currentRun = undefined;
+        error = reason;
+        setStatus("error");
+        throw reason;
+      });
+
+    return run.promise;
+  }
+
+  function cancelCurrentRun(reason) {
+    const run = currentRun;
+    currentRun = undefined;
+
+    if (run && !run.controller.signal.aborted) {
+      run.controller.abort(reason);
+    }
+  }
+
+  function settleCanceledRun() {
+    error = undefined;
+    setStatus(hasValue ? "ready" : "idle");
+  }
+
+  function setStatus(next) {
+    if (status === next) {
+      notify();
+      return;
+    }
+
+    status = next;
+    notify();
+  }
+
+  function notify() {
+    const enqueue = scheduler.enqueue ?? ((fn) => fn());
+    enqueue(() => {
+      for (const subscriber of [...subscribers]) {
+        subscriber(resource);
+      }
+    });
+  }
+}
+
 export function createStore(declarations = {}, options = {}) {
   if (!isPlainObject(declarations)) {
     throw new TypeError("createStore(...) requires a store declaration object.");
@@ -274,6 +492,16 @@ export function createStore(declarations = {}, options = {}) {
 
   store = createStoreProxy(refs, resources, plainValues, writableNames);
 
+  for (const [name, declaration] of Object.entries(resources)) {
+    if (isResourceDefinition(declaration)) {
+      resources[name] = createResource(declaration, {
+        scheduler,
+        store,
+        name
+      });
+    }
+  }
+
   for (const [name, declaration] of computedEntries) {
     const compute = typeof declaration === "function" ? declaration : declaration.compute;
     refs[name] = createComputed(() => compute(store, context), { scheduler });
@@ -292,6 +520,10 @@ export function createStore(declarations = {}, options = {}) {
         snapshot[name] = ref.snapshot();
       }
 
+      for (const [name, resource] of Object.entries(resources)) {
+        snapshot[name] = resource.snapshot();
+      }
+
       for (const [name, value] of Object.entries(plainValues)) {
         snapshot[name] = value;
       }
@@ -308,6 +540,8 @@ export function createStore(declarations = {}, options = {}) {
 
         if (ref?.[SIGNAL] || ref?.[STATUS]) {
           ref.set(value);
+        } else if (resources[name]) {
+          resources[name].restore(value);
         } else if (Object.hasOwn(plainValues, name)) {
           plainValues[name] = value;
         }
@@ -467,6 +701,10 @@ export function createFlow(definitionOrConfig, options = {}) {
 
   for (const [name, ref] of Object.entries(refs)) {
     refStops.push(ref.subscribe((value) => recordChange(name, value)));
+  }
+
+  for (const [name, resource] of Object.entries(resources)) {
+    refStops.push(resource.subscribe(() => recordChange(name, store[name])));
   }
 
   for (const [name, handler] of Object.entries(definition.on)) {
@@ -712,6 +950,57 @@ function isBrandedStoreEntry(value) {
 
 function isResourceLike(value) {
   return Boolean(value && typeof value === "object" && value[RESOURCE]);
+}
+
+function normalizeCreateResourceArgs(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
+  if (isResourceDefinition(optionsOrLoader)) {
+    return {
+      options: optionsOrLoader.options,
+      loader: optionsOrLoader.loader,
+      runtimeOptions: isPlainObject(maybeLoader) ? maybeLoader : {}
+    };
+  }
+
+  if (typeof optionsOrLoader === "function") {
+    return {
+      options: { immediate: false },
+      loader: optionsOrLoader,
+      runtimeOptions: isPlainObject(maybeLoader) ? maybeLoader : {}
+    };
+  }
+
+  if (!isPlainObject(optionsOrLoader)) {
+    throw new TypeError("createResource(...) options must be an object when provided.");
+  }
+
+  if (typeof maybeLoader !== "function") {
+    throw new TypeError("createResource(...) requires a loader function.");
+  }
+
+  return {
+    options: {
+      ...optionsOrLoader,
+      immediate: optionsOrLoader.immediate === true
+    },
+    loader: maybeLoader,
+    runtimeOptions: isPlainObject(maybeRuntimeOptions) ? maybeRuntimeOptions : {}
+  };
+}
+
+function normalizeRestoredStatus(status, hasValue) {
+  if (status === "loading") {
+    return hasValue ? "ready" : "idle";
+  }
+
+  if (status === "ready" && hasValue) {
+    return "ready";
+  }
+
+  if (status === "error") {
+    return "error";
+  }
+
+  return hasValue ? "ready" : "idle";
 }
 
 function assertAllowedStatusValue(name, value, allowedValues) {

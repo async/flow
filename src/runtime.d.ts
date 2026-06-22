@@ -29,6 +29,30 @@ export type Computed<T = unknown> = {
 
 export type SignalLike<T = unknown> = Signal<T> | Status<T> | Computed<T>;
 
+export type ResourceSnapshot<T = unknown> = {
+  value: T | undefined;
+  status: "idle" | "loading" | "ready" | "error";
+  error: unknown;
+  version: number;
+};
+
+export type Resource<T = unknown, Input = unknown> = {
+  readonly kind: "resource";
+  readonly value: T | undefined;
+  readonly status: "idle" | "loading" | "ready" | "error";
+  readonly loading: boolean;
+  readonly ready: boolean;
+  readonly error: unknown;
+  readonly version: number;
+  load(input?: Input): T | PromiseLike<T>;
+  reload(input?: Input): PromiseLike<T>;
+  set(next: T): T;
+  cancel(reason?: unknown): "idle" | "loading" | "ready" | "error";
+  subscribe(fn: (resource: Resource<T, Input>) => void): () => void;
+  snapshot(): ResourceSnapshot<T>;
+  restore(snapshot: ResourceSnapshot<T> | T): void;
+};
+
 export type FlowChange = {
   name?: string;
   input?: unknown;
@@ -81,6 +105,21 @@ export function createStatus<T>(
   options?: { scheduler?: FlowScheduler; name?: string }
 ): Status<T>;
 export function createComputed<T>(compute: () => T, options?: { scheduler?: FlowScheduler }): Computed<T>;
+export function createResource<T = unknown, Input = unknown>(
+  loader: (
+    store: Record<string, unknown>,
+    tools: { signal: AbortSignal; input: Input; version: number }
+  ) => T | PromiseLike<T>,
+  runtimeOptions?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; name?: string }
+): Resource<T, Input>;
+export function createResource<T = unknown, Input = unknown>(
+  options: { immediate?: boolean } & Record<string, unknown>,
+  loader: (
+    store: Record<string, unknown>,
+    tools: { signal: AbortSignal; input: Input; version: number }
+  ) => T | PromiseLike<T>,
+  runtimeOptions?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; name?: string }
+): Resource<T, Input>;
 export function createStore(
   declarations?: Record<string, unknown>,
   options?: { scheduler?: FlowScheduler; rejectPlainObjects?: boolean; context?: Record<string, unknown> }

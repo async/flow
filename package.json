@@ -32,6 +32,11 @@
       "import": "./src/runtime.js",
       "default": "./src/runtime.js"
     },
+    "./resource": {
+      "types": "./src/resource.d.ts",
+      "import": "./src/resource.js",
+      "default": "./src/resource.js"
+    },
     "./compose": {
       "types": "./src/compose.d.ts",
       "import": "./src/compose.js",

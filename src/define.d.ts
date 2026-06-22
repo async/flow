@@ -20,6 +20,25 @@ export type FlowComputedDefinition<T = unknown> = {
   readonly compute: (store: Record<string, unknown>, context?: FlowDefinitionContext) => T;
 };
 
+export type FlowResourceOptions = {
+  readonly immediate?: boolean;
+} & Record<string, unknown>;
+
+export type FlowResourceDefinition<T = unknown, Input = unknown> = {
+  readonly [RESOURCE]: true;
+  readonly [RESOURCE_IMMEDIATE]?: true;
+  readonly kind: "async.flow.resource";
+  readonly options: FlowResourceOptions;
+  readonly loader: (
+    store: Record<string, unknown>,
+    tools: {
+      signal: AbortSignal;
+      input: Input;
+      version: number;
+    }
+  ) => T | PromiseLike<T>;
+};
+
 export type FlowDefinitionContext = {
   describe?(): {
     statuses?: readonly string[];
@@ -39,6 +58,13 @@ export function defineStatus<T>(initial: T, allowed?: readonly T[]): FlowStatusD
 export function defineComputed<T>(
   compute: (store: Record<string, unknown>, context?: FlowDefinitionContext) => T
 ): FlowComputedDefinition<T>;
+export function defineResource<T = unknown, Input = unknown>(
+  loader: FlowResourceDefinition<T, Input>["loader"]
+): FlowResourceDefinition<T, Input>;
+export function defineResource<T = unknown, Input = unknown>(
+  options: FlowResourceOptions,
+  loader: FlowResourceDefinition<T, Input>["loader"]
+): FlowResourceDefinition<T, Input>;
 export function defineFlow(config: {
   store?: Record<string, unknown>;
   on?: Record<string, Function>;
@@ -47,7 +73,11 @@ export function isFlowDefinition(value: unknown): value is FlowDefinition;
 export function isSignalDefinition(value: unknown): value is FlowSignalDefinition;
 export function isStatusDefinition(value: unknown): value is FlowStatusDefinition;
 export function isComputedDefinition(value: unknown): value is FlowComputedDefinition;
+export function isResourceDefinition(value: unknown): value is FlowResourceDefinition;
+export function isResource(value: unknown): boolean;
+export function isImmediateResource(value: unknown): boolean;
 export const flow: typeof defineFlow;
 export const signal: typeof defineSignal;
 export const computed: typeof defineComputed;
 export const status: typeof defineStatus;
+export const resource: typeof defineResource;

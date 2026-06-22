@@ -3,6 +3,7 @@ export {
   defineSignal,
   defineStatus,
   defineComputed,
+  defineResource,
   SIGNAL,
   STATUS,
   COMPUTED,
@@ -10,14 +11,18 @@ export {
   RESOURCE_IMMEDIATE,
   defineSignal as signal,
   defineComputed as computed,
-  defineStatus as status
+  defineStatus as status,
+  defineResource as resource,
+  isResource,
+  isImmediateResource
 } from "./define.js";
 export {
   createFlow,
   createStore,
   createSignal,
   createStatus,
-  createComputed
+  createComputed,
+  createResource
 } from "./runtime.js";
 export {
   compose,

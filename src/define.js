@@ -2,6 +2,7 @@ export const FLOW_DEFINITION = "async.flow.definition";
 export const SIGNAL_DEFINITION = "async.flow.signal";
 export const COMPUTED_DEFINITION = "async.flow.computed";
 export const STATUS_DEFINITION = "async.flow.status";
+export const RESOURCE_DEFINITION = "async.flow.resource";
 
 export const SIGNAL = Symbol.for("@async/flow.signal");
 export const STATUS = Symbol.for("@async/flow.status");
@@ -41,6 +42,26 @@ export function defineComputed(compute) {
     kind: COMPUTED_DEFINITION,
     compute
   };
+}
+
+export function defineResource(optionsOrLoader, maybeLoader) {
+  const { options, loader } = normalizeResourceArgs(optionsOrLoader, maybeLoader);
+  const definition = {
+    [RESOURCE]: true,
+    kind: RESOURCE_DEFINITION,
+    options,
+    loader
+  };
+
+  if (options.immediate === true) {
+    Object.defineProperty(definition, RESOURCE_IMMEDIATE, {
+      configurable: false,
+      enumerable: false,
+      value: true
+    });
+  }
+
+  return definition;
 }
 
 export function defineFlow(config = {}) {
@@ -102,6 +123,18 @@ export function isComputedDefinition(value) {
   return isPlainObject(value) && value.kind === COMPUTED_DEFINITION;
 }
 
+export function isResourceDefinition(value) {
+  return Boolean(isPlainObject(value) && value.kind === RESOURCE_DEFINITION && value[RESOURCE]);
+}
+
+export function isResource(value) {
+  return Boolean(value?.[RESOURCE]);
+}
+
+export function isImmediateResource(value) {
+  return Boolean(value?.[RESOURCE] && value?.[RESOURCE_IMMEDIATE]);
+}
+
 export function isPlainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -115,3 +148,29 @@ export const flow = defineFlow;
 export const signal = defineSignal;
 export const computed = defineComputed;
 export const status = defineStatus;
+export const resource = defineResource;
+
+function normalizeResourceArgs(optionsOrLoader, maybeLoader) {
+  if (typeof optionsOrLoader === "function" && maybeLoader === undefined) {
+    return {
+      options: { immediate: false },
+      loader: optionsOrLoader
+    };
+  }
+
+  if (!isPlainObject(optionsOrLoader)) {
+    throw new TypeError("resource(...) options must be an object when provided.");
+  }
+
+  if (typeof maybeLoader !== "function") {
+    throw new TypeError("resource(...) requires a loader function.");
+  }
+
+  return {
+    options: {
+      ...optionsOrLoader,
+      immediate: optionsOrLoader.immediate === true
+    },
+    loader: maybeLoader
+  };
+}
