@@ -164,7 +164,7 @@ export default definePipeline({
       },
       env: {
         GITHUB_TOKEN: env.secret("GITHUB_TOKEN"),
-        NODE_AUTH_TOKEN: env.secret("npm_token")
+        NODE_AUTH_TOKEN: env.secret("NPM_TOKEN")
       },
       github: {
         permissions: {

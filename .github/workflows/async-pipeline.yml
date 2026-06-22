@@ -144,7 +144,7 @@ jobs:
           provenance: true
         env:
           CI: true
-          NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Run release doctor
         uses: async/actions/doctor@41e79159e12a7a2092c6911d850450082a8add09 # v0.1.20
