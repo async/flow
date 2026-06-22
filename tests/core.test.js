@@ -264,6 +264,36 @@ test("handlers receive store input and receiver capabilities", () => {
   assert.equal(counter.dispatch("increment", { by: 2 }), 2);
   assert.deepEqual(events, [["increment", 2]]);
   assert.equal(counter.handlers.read(), 2);
+  assert.equal(Object.hasOwn(counter, "run"), false);
+  assert.equal(counter.run, undefined);
+  assert.throws(() => counter.dispatch("missing"), /Unknown Flow handler/);
+});
+
+test("async dispatch returns promise-like handler results", async () => {
+  const checkout = flow({
+    store: {
+      submitted: false
+    },
+    on: {
+      async submit(store, input) {
+        store.submitted = true;
+        return input.orderId;
+      }
+    }
+  });
+
+  const result = checkout.dispatch("submit", { orderId: "ord_123" });
+
+  assert.equal(typeof result.then, "function");
+  assert.equal(await result, "ord_123");
+  assert.equal(checkout.store.submitted, true);
+});
+
+test("old runner subpath is not public", async () => {
+  await assert.rejects(
+    import("@async/flow/run"),
+    /Package subpath|Cannot find/
+  );
 });
 
 test("arrow handlers work when they only need store and input", () => {

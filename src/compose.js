@@ -1,4 +1,5 @@
 const COMPOSE_STOP = Symbol("async.flow.compose.stop");
+export const COMPOSE_BATCH = Symbol.for("@async/flow.compose.batch");
 
 export function compose(stepOrSteps) {
   const steps = Array.isArray(stepOrSteps) ? stepOrSteps : [stepOrSteps];
@@ -10,73 +11,52 @@ export function compose(stepOrSteps) {
   }
 
   return function composed(store, input) {
+    const receiver = this;
     let previous;
-    let asyncChain = null;
+    let index = 0;
 
-    for (const step of steps) {
-      if (asyncChain) {
-        asyncChain = asyncChain.then((signal) => {
-          if (signal === COMPOSE_STOP) {
-            return COMPOSE_STOP;
+    return runSegment(false);
+
+    function runSegment(batchContinuation) {
+      const execute = () => {
+        while (index < steps.length) {
+          const next = steps[index].call(receiver, store, input, previous);
+          index += 1;
+
+          if (isPromiseLike(next)) {
+            return Promise.resolve(next).then((resolved) => {
+              if (applyStepResult(resolved) === COMPOSE_STOP) {
+                return previous;
+              }
+
+              return runSegment(true);
+            });
           }
 
-          return runStepAsync(this, step, store, input, previous, (next) => {
-            if (isComposeStop(next)) {
-              return COMPOSE_STOP;
-            }
-
-            if (next !== undefined) {
-              previous = next;
-            }
-
-            return undefined;
-          });
-        });
-        continue;
-      }
-
-      const next = step.call(this, store, input, previous);
-
-      if (isPromiseLike(next)) {
-        asyncChain = Promise.resolve(next).then((resolved) => {
-          if (isComposeStop(resolved)) {
-            return COMPOSE_STOP;
+          if (applyStepResult(next) === COMPOSE_STOP) {
+            return previous;
           }
+        }
 
-          if (resolved !== undefined) {
-            previous = resolved;
-          }
-
-          return undefined;
-        });
-        continue;
-      }
-
-      if (isComposeStop(next)) {
         return previous;
+      };
+
+      const batch = batchContinuation ? receiver?.[COMPOSE_BATCH] : undefined;
+      return typeof batch === "function" ? batch.call(receiver, execute) : execute();
+    }
+
+    function applyStepResult(next) {
+      if (isComposeStop(next)) {
+        return COMPOSE_STOP;
       }
 
       if (next !== undefined) {
         previous = next;
       }
-    }
 
-    if (!asyncChain) {
-      return previous;
+      return undefined;
     }
-
-    return asyncChain.then(() => previous);
   };
-}
-
-function runStepAsync(receiver, step, store, input, previous, applyResult) {
-  const next = step.call(receiver, store, input, previous);
-
-  if (isPromiseLike(next)) {
-    return Promise.resolve(next).then(applyResult);
-  }
-
-  return applyResult(next);
 }
 
 export function isPromiseLike(value) {

@@ -33,6 +33,8 @@ export {
   update,
   when,
   onError,
+  TRANSITION,
+  GUARD,
   guard,
   transition,
   can,

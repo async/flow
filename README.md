@@ -247,10 +247,10 @@ const order = flow({
   },
 
   on: {
-    next: transition([
-      { from: "shipping", to: "payment" },
-      { from: "payment", to: "review" }
-    ])
+    next: transition("step", {
+      shipping: "payment",
+      payment: "review"
+    })
   }
 });
 ```

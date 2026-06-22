@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  GUARD,
+  TRANSITION,
   can,
   flow,
   guard,
@@ -35,10 +37,10 @@ test("transition writes matching status changes and no-ops when no rule matches"
       step: status("shipping", ["shipping", "payment", "review"])
     },
     on: {
-      next: transition([
-        { from: "shipping", to: "payment" },
-        { from: "payment", to: "review" }
-      ])
+      next: transition("step", {
+        shipping: "payment",
+        payment: "review"
+      })
     }
   });
 
@@ -72,6 +74,24 @@ test("guard skips the handler when the predicate is false", () => {
   assert.equal(checkout.store.submitted, true);
 });
 
+test("transition and guard metadata use public symbols", () => {
+  const move = transition("step", { shipping: "payment" });
+  const guarded = guard(() => true, move);
+
+  assert.equal(move[TRANSITION].status, "step");
+  assert.deepEqual(move[TRANSITION].rules, [
+    {
+      from: "shipping",
+      to: "payment",
+      when: undefined
+    }
+  ]);
+  assert.equal(guarded[TRANSITION], move[TRANSITION]);
+  assert.equal(typeof guarded[GUARD].predicate, "function");
+  assert.equal(Object.hasOwn(move, "_flowTransition"), false);
+  assert.equal(Object.hasOwn(guarded, "_flowTransition"), false);
+});
+
 test("strict helpers work inside compose pipelines", () => {
   const checkout = flow({
     store: {
@@ -80,7 +100,7 @@ test("strict helpers work inside compose pipelines", () => {
     },
     on: {
       next: compose([
-        transition([{ from: "shipping", to: "payment" }]),
+        transition("step", { shipping: "payment" }),
         set("moved", true)
       ])
     }
@@ -95,11 +115,11 @@ test("can and matches compute from strict transition metadata and status values"
   const checkout = flow({
     store: {
       step: status("shipping", ["shipping", "payment"]),
-      canNext: can("next"),
-      inPayment: matches("payment")
+      canNext: can("step", "next"),
+      inPayment: matches("step", "payment")
     },
     on: {
-      next: transition([{ from: "shipping", to: "payment" }])
+      next: transition("step", { shipping: "payment" })
     }
   });
 

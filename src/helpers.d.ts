@@ -1,5 +1,7 @@
 import type { FlowHandler } from "./runtime.js";
 
+export const TRANSITION: unique symbol;
+export const GUARD: unique symbol;
 export const status: typeof import("./define.js").defineStatus;
 export function set(name: string, value: unknown): FlowHandler;
 export function set(updates: Record<string, unknown>): FlowHandler;
@@ -19,11 +21,11 @@ export function guard(
   handler: FlowHandler
 ): FlowHandler;
 export function transition(
+  statusName: string,
   config:
     | Record<string, unknown>
     | { from?: unknown | readonly unknown[]; to: unknown; when?: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean }
-    | readonly { from?: unknown | readonly unknown[]; to: unknown; when?: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean }[],
-  options?: { status?: string; state?: string; signal?: string }
+    | readonly { from?: unknown | readonly unknown[]; to: unknown; when?: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean }[]
 ): FlowHandler;
-export function can(eventName: string, options?: { status?: string; state?: string }): unknown;
-export function matches(value: unknown, options?: { status?: string; state?: string; signal?: string }): unknown;
+export function can(statusName: string, eventName: string): unknown;
+export function matches(statusName: string, value: unknown): unknown;

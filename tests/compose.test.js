@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { flow, set } from "@async/flow";
 import { compose, isPromiseLike } from "@async/flow/compose";
 
 test("compose(fn) and compose(array) return functions", () => {
@@ -40,6 +41,23 @@ test("steps receive stable input and previous result", () => {
   ]);
 });
 
+test("compose preserves the receiver for every step", () => {
+  const receiver = { seen: [] };
+  const handler = compose([
+    function first() {
+      this.seen.push("first");
+      return 1;
+    },
+    function second(_store, _input, previous) {
+      this.seen.push(["second", previous]);
+    }
+  ]);
+
+  handler.call(receiver, {});
+
+  assert.deepEqual(receiver.seen, ["first", ["second", 1]]);
+});
+
 test("async steps switch remaining execution to a promise-like result", async () => {
   const order = [];
   const handler = compose([
@@ -62,6 +80,62 @@ test("async steps switch remaining execution to a promise-like result", async ()
   assert.equal(isPromiseLike(result), true);
   assert.equal(await result, 3);
   assert.deepEqual(order, ["first", "second", "third"]);
+});
+
+test("Flow compose continuations resume in a fresh batched segment after async boundaries", async () => {
+  const changes = [];
+  const checkout = flow({
+    store: {
+      loading: false,
+      orderId: null,
+      complete: false
+    },
+    on: {
+      submit: compose([
+        set("loading", true),
+        async (_store, input) => input.orderId,
+        (store, _input, orderId) => {
+          store.orderId = orderId;
+        },
+        (store) => {
+          store.complete = true;
+        }
+      ])
+    }
+  });
+
+  checkout.subscribe((change) => changes.push(change));
+  const pending = checkout.dispatch("submit", { orderId: "ord_123" });
+
+  assert.deepEqual(changes, [
+    {
+      name: "submit",
+      input: { orderId: "ord_123" },
+      store: {
+        loading: true
+      }
+    }
+  ]);
+
+  await pending;
+
+  assert.deepEqual(changes, [
+    {
+      name: "submit",
+      input: { orderId: "ord_123" },
+      store: {
+        loading: true
+      }
+    },
+    {
+      name: "submit",
+      input: { orderId: "ord_123" },
+      store: {
+        orderId: "ord_123",
+        complete: true
+      }
+    }
+  ]);
 });
 
 test("sync errors throw before an async boundary and reject after one", async () => {

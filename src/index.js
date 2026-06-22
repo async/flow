@@ -35,6 +35,8 @@ export {
   update,
   when,
   onError,
+  TRANSITION,
+  GUARD,
   status as statusHelper,
   guard,
   transition,

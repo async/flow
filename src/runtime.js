@@ -12,8 +12,10 @@ import {
   isSignalDefinition,
   isStatusDefinition
 } from "./define.js";
-import { isPromiseLike } from "./compose.js";
+import { COMPOSE_BATCH, isPromiseLike } from "./compose.js";
 import { resolveScheduler } from "./scheduler.js";
+
+const TRANSITION = Symbol.for("@async/flow.transition");
 
 const RESERVED_INSTANCE_NAMES = new Set([
   "get",
@@ -568,8 +570,8 @@ export function createFlow(definitionOrConfig, options = {}) {
   let flow;
 
   for (const [name, handler] of Object.entries(definition.on)) {
-    if (handler?._flowTransition) {
-      transitionMetadata.set(name, handler._flowTransition);
+    if (handler?.[TRANSITION]) {
+      transitionMetadata.set(name, handler[TRANSITION]);
     }
   }
 
@@ -644,7 +646,7 @@ export function createFlow(definitionOrConfig, options = {}) {
         throw new Error(`Unknown Flow handler "${name}".`);
       }
 
-      const receiver = createHandlerReceiver(input);
+      const receiver = createHandlerReceiver(name, input);
       const result = runFlowBatch(name, input, () => {
         const next = handler.call(receiver, store, input);
 
@@ -727,12 +729,15 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   }
 
-  function createHandlerReceiver(input) {
+  function createHandlerReceiver(name, input) {
     const receiver = {
       store,
       refs,
       resources,
       dispatch: flow.dispatch.bind(flow),
+      [COMPOSE_BATCH](fn) {
+        return runFlowBatch(name, input, fn);
+      },
       _describe: flow._describe.bind(flow),
       after(ms, eventName, nextInput) {
         if (!Number.isFinite(ms) || ms < 0) {

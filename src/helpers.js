@@ -1,6 +1,9 @@
 import { defineComputed, defineStatus, isPlainObject } from "./define.js";
 import { createComposeStop, isPromiseLike } from "./compose.js";
 
+export const TRANSITION = Symbol.for("@async/flow.transition");
+export const GUARD = Symbol.for("@async/flow.guard");
+
 export const status = defineStatus;
 
 export function set(nameOrUpdates, maybeValue) {
@@ -92,12 +95,18 @@ export function guard(predicate, handler) {
   };
 
   copyFlowMetadata(handler, guardStep);
+  Object.defineProperty(guardStep, GUARD, {
+    configurable: true,
+    value: {
+      predicate
+    }
+  });
   return guardStep;
 }
 
-export function transition(config, options = {}) {
+export function transition(statusName, config) {
+  assertStatusName(statusName, "transition");
   const rules = normalizeTransitionRules(config);
-  const statusName = options?.status ?? options?.state ?? options?.signal;
 
   const transitionStep = function transitionStep(store, input, previous) {
     const name = resolveStatusName(this, statusName);
@@ -114,7 +123,7 @@ export function transition(config, options = {}) {
     return undefined;
   };
 
-  Object.defineProperty(transitionStep, "_flowTransition", {
+  Object.defineProperty(transitionStep, TRANSITION, {
     configurable: true,
     value: {
       status: statusName,
@@ -125,27 +134,34 @@ export function transition(config, options = {}) {
   return transitionStep;
 }
 
-export function can(eventName, options = {}) {
+export function can(statusName, eventName) {
+  assertStatusName(statusName, "can");
   if (typeof eventName !== "string" || eventName.length === 0) {
-    throw new TypeError("can(...) requires a transition handler name.");
+    throw new TypeError("can(...) requires an event name.");
   }
 
   return defineComputed((store, context) => {
     const metadata = context?.describe?.().transitions?.[eventName];
-    if (!metadata) {
+    if (!metadata || metadata.status !== statusName) {
       return false;
     }
 
-    const name = resolveStatusName(context, options?.status ?? options?.state ?? metadata.status);
-    const current = store[name];
+    const current = store[statusName];
     return metadata.rules.some((entry) => transitionRuleMatches(entry, current, store));
   });
 }
 
-export function matches(value, options = {}) {
+export function matches(statusName, value) {
+  assertStatusName(statusName, "matches");
   return defineComputed((store, context) =>
-    Object.is(store[resolveStatusName(context, options?.status ?? options?.state ?? options?.signal)], value)
+    Object.is(store[resolveStatusName(context, statusName)], value)
   );
+}
+
+function assertStatusName(value, helperName) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${helperName}(...) requires a status name.`);
+  }
 }
 
 function assertUpdateObject(value, helperName) {
@@ -221,10 +237,17 @@ function resolveStatusName(source, requested) {
 }
 
 function copyFlowMetadata(source, target) {
-  if (source?._flowTransition) {
-    Object.defineProperty(target, "_flowTransition", {
+  if (source?.[TRANSITION]) {
+    Object.defineProperty(target, TRANSITION, {
       configurable: true,
-      value: source._flowTransition
+      value: source[TRANSITION]
+    });
+  }
+
+  if (source?.[GUARD]) {
+    Object.defineProperty(target, GUARD, {
+      configurable: true,
+      value: source[GUARD]
     });
   }
 }
