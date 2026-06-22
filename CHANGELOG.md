@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 - 2026-06-22
+
+- Added `parallel(...)` for fan-out/fan-in effects inside composed handlers.
+- Added `remember(...)` for explicit previous-value copies around scoped
+  handler work.
+- Added public `flow.describe()` metadata for store entries, resources,
+  handlers, transitions, and guards.
+- Added event-scoped `flow.can(...)`, receiver `this.can(...)`, and computed
+  `can(eventName)` availability checks.
+- Added `flow.explain(...)` and receiver `this.explain(...)` for stable
+  blocked-event reason data.
+
 ## 0.2.0 - 2026-06-22
 
 - Added the L3 Flow API refresh around `store`, `status`, `resource`,
