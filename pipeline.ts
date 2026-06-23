@@ -6,6 +6,7 @@ const packageInputs = [
   "tests/**/*.test.js",
   "scripts/**/*.js",
   "README.md",
+  "docs/**/*.md",
   "CHANGELOG.md",
   "LICENSE",
   "AGENTS.md",
@@ -36,17 +37,20 @@ export default definePipeline({
       nodeVersion: 24,
       cache: false,
       dependencyCache: false,
-      packagePreviews: true
+      packagePreviews: true,
+      pages: { target: "docs.site" }
     },
     tasks: {
       prefix: "pipeline",
       runners: ["package"],
       targets: [{ package: "@async/flow" }],
       jobs: ["publish", "release-doctor", "snapshot", "verify"],
-      tasks: ["github.check", "pack", "sync.check", "test", "typecheck"],
+      tasks: ["docs.site", "github.check", "pack", "sync.check", "test", "typecheck"],
       scripts: {
+        docs: "run-task docs.site",
         "github:check": "github check",
         "github:generate": "github generate",
+        pages: "run-task docs.site",
         publish: "run publish",
         "publish:github:main": "publish github main --package .",
         "publish:github:pr": "publish github pr --package .",
@@ -76,6 +80,13 @@ export default definePipeline({
       cache: false,
       run: sh`node scripts/typecheck.js`
     }),
+    "docs.site": task({
+      description: "Build the standardized GitHub Pages documentation site.",
+      inputs: ["README.md", "CHANGELOG.md", "docs/**/*.md", "scripts/build-pages.js"],
+      outputs: [".async/pages/**"],
+      cache: false,
+      run: sh`node scripts/build-pages.js`
+    }),
     "sync.check": task({
       description: "Validate generated package scripts and task locks from pipeline.ts.",
       inputs: pipelineInputs,
@@ -90,7 +101,7 @@ export default definePipeline({
     }),
     pack: task({
       description: "Verify the public npm package contents without publishing.",
-      dependsOn: ["test", "typecheck", "sync.check", "github.check"],
+      dependsOn: ["test", "typecheck", "docs.site", "sync.check", "github.check"],
       inputs: [...packageInputs, ...pipelineInputs],
       cache: false,
       run: sh`pnpm run pack:check`

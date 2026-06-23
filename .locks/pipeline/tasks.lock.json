@@ -34,6 +34,10 @@
           "value": "async-pipeline run verify"
         },
         {
+          "name": "pipeline:task:docs.site",
+          "value": "async-pipeline run-task docs.site"
+        },
+        {
           "name": "pipeline:task:github.check",
           "value": "async-pipeline run-task github.check"
         },
@@ -54,12 +58,20 @@
           "value": "async-pipeline run-task typecheck"
         },
         {
+          "name": "pipeline:docs",
+          "value": "async-pipeline run-task docs.site"
+        },
+        {
           "name": "pipeline:github:check",
           "value": "async-pipeline github check"
         },
         {
           "name": "pipeline:github:generate",
           "value": "async-pipeline github generate"
+        },
+        {
+          "name": "pipeline:pages",
+          "value": "async-pipeline run-task docs.site"
         },
         {
           "name": "pipeline:publish",
@@ -134,6 +146,10 @@
       "value": "async-pipeline run verify"
     },
     {
+      "name": "pipeline:task:docs.site",
+      "value": "async-pipeline run-task docs.site"
+    },
+    {
       "name": "pipeline:task:github.check",
       "value": "async-pipeline run-task github.check"
     },
@@ -154,12 +170,20 @@
       "value": "async-pipeline run-task typecheck"
     },
     {
+      "name": "pipeline:docs",
+      "value": "async-pipeline run-task docs.site"
+    },
+    {
       "name": "pipeline:github:check",
       "value": "async-pipeline github check"
     },
     {
       "name": "pipeline:github:generate",
       "value": "async-pipeline github generate"
+    },
+    {
+      "name": "pipeline:pages",
+      "value": "async-pipeline run-task docs.site"
     },
     {
       "name": "pipeline:publish",
@@ -214,6 +238,6 @@
       "value": "async-pipeline run verify --force"
     }
   ],
-  "hash": "sha256:2afa0ca5dfc9a4409f484df9b6d0283d6abf6562fe5344d6d2affbdb1fc21545",
-  "generatedAt": "2026-06-22T06:49:25.241Z"
+  "hash": "sha256:6fbfa1a84e7b5a6affbcdba00fc9d593ad27264778a6bd483b6c96260ef9c008",
+  "generatedAt": "2026-06-23T06:13:32.416Z"
 }

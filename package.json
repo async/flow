@@ -15,7 +15,7 @@
   "bugs": {
     "url": "https://github.com/async/flow/issues"
   },
-  "homepage": "https://github.com/async/flow#readme",
+  "homepage": "https://async.github.io/flow/",
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
@@ -66,8 +66,10 @@
   "scripts": {
     "async-pipeline": "async-pipeline",
     "pack:check": "npm --cache .async/npm-cache pack --dry-run --json --ignore-scripts",
+    "pipeline:docs": "async-pipeline run-task docs.site",
     "pipeline:github:check": "async-pipeline github check",
     "pipeline:github:generate": "async-pipeline github generate",
+    "pipeline:pages": "async-pipeline run-task docs.site",
     "pipeline:publish": "async-pipeline run publish",
     "pipeline:publish:github:main": "async-pipeline publish github main --package .",
     "pipeline:publish:github:pr": "async-pipeline publish github pr --package .",
@@ -79,6 +81,7 @@
     "pipeline:snapshot": "async-pipeline run snapshot",
     "pipeline:sync:check": "async-pipeline sync check",
     "pipeline:sync:generate": "async-pipeline sync generate",
+    "pipeline:task:docs.site": "async-pipeline run-task docs.site",
     "pipeline:task:github.check": "async-pipeline run-task github.check",
     "pipeline:task:pack": "async-pipeline run-task pack",
     "pipeline:task:sync.check": "async-pipeline run-task sync.check",
