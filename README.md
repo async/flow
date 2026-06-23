@@ -1,19 +1,20 @@
 # @async/flow
 
-Portable store, resource, and handler runtime for Async packages.
+Portable store, async signal, and handler runtime for Async packages.
 
 Flow is useful when an app needs signal-like state, event handlers, async
-resources, and small workflow helpers without adopting a full statechart engine.
+signals, and small workflow helpers without adopting a full statechart engine.
 
 Pick the smallest layer that solves the problem:
 
-- L1 primitives: use `createSignal`, `createComputed`, `createResource`, and
+- L1 primitives: use `createSignal`, `createComputed`, `createAsyncSignal`, and
   `createStore` when an adapter or library needs explicit refs and controllers.
 - L2 Flow: use `flow(...)` when state changes should run through named events
-  and batched handlers.
-- L3 helpers: use `compose(...)`, `parallel(...)`, `remember(...)`,
-  `status(...)`, `transition(...)`, and guards when a workflow benefits from
-  reusable steps and finite status helpers.
+  and batched plain functions.
+- L2.5 composition: use `compose(...)` and `parallel(...)` when a Flow handler
+  needs ordered or fan-out/fan-in work without a full helper vocabulary.
+- L3 steps: use `set(...)`, `when(...)`, `branch(...)`, `dispatch(...)`, and
+  `after(...)` when repeated workflow wiring should read as reusable steps.
 
 ## Install
 
@@ -54,16 +55,16 @@ counter.refs.phase.get(); // "active"
 A Flow instance combines:
 
 - `store`: author-facing values with getter/setter behavior.
-- `refs`: explicit signal, status, and computed refs for adapters.
-- `resources`: mounted async resources and their controllers.
+- `refs`: explicit signal, status, computed, and async signal refs for adapters.
+- `resources`: compatibility view of async signal controllers.
 - `dispatch(name, input)`: event execution.
 - `can(name, input?)`: event availability checks.
 - `explain(name, input?)`: structured blocked-event reasons.
 - `describe()`: public inspection metadata for stores, resources, handlers,
   transitions, and guards.
-- `compose([...])`: ordered handler steps from `@async/flow/compose`.
-- `parallel(...)`: fan-out/fan-in effects inside a composed handler.
-- `remember(...)`: explicit previous-value copies around scoped work.
+
+The package also provides `compose(...)`, `parallel(...)`, and `remember(...)`
+for ordered handler steps.
 
 ## Store Values
 
@@ -78,8 +79,10 @@ const cart = flow({
   store: {
     items: [],
     settings: signal({ currency: "USD" }),
-    count: (store) => store.items.length,
-    isEmpty: computed((store) => store.count === 0),
+    count: computed(function () {
+      return this.store.items.length;
+    }),
+    isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0),
     phase: status("idle", ["idle", "ready"])
   },
 
@@ -98,99 +101,93 @@ cart.refs.items.get(); // [{ id: "sku_123" }]
 cart.store.settings = { currency: "EUR" };
 ```
 
-## Resources
+## Async Signals
 
-`resource(loader)` declares a lazy async value with lifecycle state and explicit
-controls. The loader receives the store plus tools containing a native abort
-signal, the load input, and the resource version.
+`asyncSignal(loader)` declares a lazy async value with lifecycle state and
+explicit controls. Loaders receive user data from `options.arguments` or
+explicit `load(...args)` calls. Flow context and lifecycle tools are available
+through the function receiver.
 
 ```js
-import { flow, resource } from "@async/flow";
+import { asyncSignal, flow } from "@async/flow";
 
 const greeting = flow({
   store: {
     name: "World",
-    greeting: resource(async (store, { signal }) => {
-      const response = await fetch(`/api/greeting/${store.name}`, { signal });
+    greeting: asyncSignal({ arguments: (store) => [store.name] }, async function (name) {
+      const response = await fetch(`/api/greeting/${name}`, { signal: this.signal });
       return response.text();
     })
   },
 
   on: {
-    fetch(store) {
-      return store.greeting.load();
+    fetch() {
+      return this.refs.greeting.load();
     },
 
-    reload(store) {
-      return store.greeting.reload();
+    reload() {
+      return this.refs.greeting.reload();
     },
 
-    cancel(store, reason) {
-      return store.greeting.cancel(reason);
+    cancel(_store, reason) {
+      return this.refs.greeting.cancel(reason);
     }
   }
 });
 
 await greeting.dispatch("fetch");
 
-greeting.store.greeting.status; // "ready"
-greeting.store.greeting.value; // loaded text
+greeting.store.greeting; // loaded text
+greeting.refs.greeting.status; // "ready"
 ```
 
-Lazy resources stay as controller objects in `store`. Immediate resources read
-as values through `store` and keep their controller under `flow.resources`.
+Lazy and immediate async signals both read as current values through `store`.
+The controller lives under `refs`; `resources` remains a compatibility view of
+the same controller.
 
 ```js
 const profile = flow({
   store: {
-    user: resource({ immediate: true }, async (_store, { signal }) => {
-      const response = await fetch("/api/user", { signal });
+    user: asyncSignal({ immediate: true }, async function () {
+      const response = await fetch("/api/user", { signal: this.signal });
       return response.json();
     })
   },
 
   on: {
     refreshUser() {
-      return this.resources.user.reload();
+      return this.refs.user.reload();
     }
   }
 });
 
 profile.store.user; // current value
-profile.resources.user.status; // "loading", "ready", or "error"
+profile.refs.user.status; // "loading", "ready", or "error"
+profile.resources.user === profile.refs.user; // true
 ```
 
-More detail: [Resource Lifecycle](docs/resources.md).
+More detail: [Async Signal Lifecycle](docs/resources.md).
 
-## Compose And Status Workflows
+## Compose And Step Workflows
 
 Use `compose(...)` for ordered steps that should share one Flow handler input.
 Each step receives `(store, input, previous)`. Use `parallel(...)` when one
-ordered step should run independent effects before continuing. Use
-`remember(...)` when a handler should copy previous store values into explicit
-store fields after scoped work succeeds.
+ordered step should run independent effects before continuing. Use root-exported
+step helpers when the repeated parts are store writes, gates, branches, event
+dispatches, or scheduled follow-up events.
 
 ```js
-import { flow, parallel, remember, set, status, transition, when } from "@async/flow";
-import { compose } from "@async/flow/compose";
+import { compose, flow, parallel, set, status, when } from "@async/flow";
 
 const checkout = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
-    previousStep: null,
     canSubmit: true,
     loading: false,
     orderId: null
   },
 
   on: {
-    next: remember(["step", "previousStep"], [
-      transition("step", {
-        shipping: "payment",
-        payment: "review"
-      })
-    ]),
-
     submit: compose([
       when((store) => store.step === "review" && store.canSubmit),
       set("loading", true),
@@ -226,9 +223,9 @@ More detail: [Compose And Status Helpers](docs/compose-and-status.md).
 Flow can answer whether an event is callable now without dispatching it.
 
 ```js
-checkout.can("next"); // true
-checkout.explain("submit");
-// { event: "submit", allowed: false, reason: "guard_failed", source: "guard" }
+checkout.can("submit"); // true for this plain composed handler
+checkout.explain("missing");
+// { event: "missing", allowed: false, reason: "unknown_event" }
 ```
 
 Use `describe()` when adapters or tests need stable public metadata:
@@ -236,9 +233,8 @@ Use `describe()` when adapters or tests need stable public metadata:
 ```js
 const description = checkout.describe();
 
-description.handlers; // ["next", "submit"]
+description.handlers; // ["submit"]
 description.store.step.kind; // "status"
-description.transitions.next.status; // "step"
 ```
 
 Descriptions expose names, current values, lifecycle state, and safe metadata.
@@ -291,25 +287,44 @@ Receiver capabilities include `this.store`, `this.refs`, `this.resources`,
 `this.explain(name, input)`, `this.describe()`,
 `this.after(ms, eventName, input)`, and `this.dispose(cleanup)`.
 
-## Public Subpaths
+## Root And Subpaths
+
+The root package exports the complete opinionated Flow surface. Use subpaths
+when a consumer wants a narrower entrypoint.
 
 ```js
-import { flow, signal, status, computed, resource } from "@async/flow";
-import { compose, parallel, remember } from "@async/flow/compose";
-import { createFlow, createResource, createStore, createSignal } from "@async/flow/runtime";
-import { defineFlow, defineResource } from "@async/flow/define";
-import { createResource as createStandaloneResource } from "@async/flow/resource";
+import {
+  after,
+  asyncSignal,
+  branch,
+  compose,
+  computed,
+  createAsyncSignal,
+  createFlow,
+  createSignal,
+  createStore,
+  defineAsyncSignal,
+  defineFlow,
+  dispatch,
+  flow,
+  parallel,
+  remember,
+  set,
+  signal,
+  status,
+  when
+} from "@async/flow";
 ```
 
-The old `@async/flow/run` subpath is not public. Use
-`@async/flow/compose`.
+The old `@async/flow/run` subpath is not public. Use the root `compose(...)`
+export or the narrow `@async/flow/compose` entrypoint.
 
 ## Docs
 
 - [Docs Index](docs/README.md)
 - [Layer Guide](docs/layers.md)
-- [Signals, Computed, Resources, And Store](docs/state-and-store.md)
-- [Resource Lifecycle](docs/resources.md)
+- [Signals, Computed, Async Signals, And Store](docs/state-and-store.md)
+- [Async Signal Lifecycle](docs/resources.md)
 - [Compose And Status Helpers](docs/compose-and-status.md)
 
 ## Package Checks

@@ -1,11 +1,21 @@
 # Compose And Status Helpers
 
-`compose(...)` creates a handler from ordered steps. It is exported from
-`@async/flow/compose`.
+`compose(...)` creates a handler from ordered steps.
 
 ```js
-import { flow, parallel, remember, set, status, transition, when } from "@async/flow";
-import { compose } from "@async/flow/compose";
+import {
+  after,
+  branch,
+  compose,
+  dispatch,
+  flow,
+  parallel,
+  remember,
+  set,
+  status,
+  transition,
+  when
+} from "@async/flow";
 
 const checkout = flow({
   store: {
@@ -61,12 +71,12 @@ step(store, input, previous);
 returned by an earlier step.
 
 `compose` preserves the receiver for every step, so method-style helpers can use
-`this.dispatch(...)`, `this.resources`, and other Flow receiver capabilities.
+`this.dispatch(...)`, `this.refs`, and other Flow receiver capabilities.
 
 ```js
 const handler = compose([
   function load(store) {
-    return this.resources.user.load(store.userId);
+    return this.refs.user.load(store.userId);
   },
   function cache(store, _input, user) {
     store.currentUser = user;
@@ -105,6 +115,13 @@ set("loading", true);
 set({ loading: false, error: null });
 ```
 
+Values may also be derived from the current store, dispatch input, or previous
+compose result:
+
+```js
+set("orderId", (_store, _input, order) => order.id);
+```
+
 `update(key, fn)` writes a value derived from the current store value:
 
 ```js
@@ -117,6 +134,34 @@ update("count", (count) => count + 1);
 compose([
   when((store) => store.canSubmit),
   set("loading", true)
+]);
+```
+
+`dispatch(eventName, input?)` forwards to another Flow event. `input` may be a
+plain value or a function that receives `(store, input, previous)`.
+
+```js
+dispatch("finish", (_store, input) => ({ source: input.source }));
+```
+
+`after(ms, eventName, input?)` schedules another Flow event through the current
+Flow receiver.
+
+```js
+after(5000, "checkJobStatus", (store) => ({ id: store.jobId }));
+```
+
+`branch(cases)` runs the first matching case. Tuple cases are
+`[predicate, handler]`; a bare handler is the default case.
+
+```js
+branch([
+  [(store) => store.jobStatus === "SUCCEEDED", dispatch("reportJobSucceeded")],
+  [(store) => store.jobStatus === "ERROR", dispatch("reportJobError")],
+  compose([
+    set("step", "WaitForCompletion"),
+    after(5000, "checkJobStatus")
+  ])
 ]);
 ```
 
@@ -144,10 +189,10 @@ compose([
   set({ refreshing: true, error: null }),
   parallel({
     user() {
-      return this.resources.user.reload();
+      return this.refs.user.reload();
     },
     cart() {
-      return this.resources.cart.reload();
+      return this.refs.cart.reload();
     }
   }),
   set("refreshing", false)

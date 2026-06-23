@@ -18,18 +18,19 @@ workspace `AGENTS.md` still applies.
 - Top-level `flow(...)` creates a live standalone Flow instance.
 - Definition helpers in `@async/flow/define` must not create shared live state
   at import time.
-- The generic `@async/flow/run` runner must not depend on Flow signals,
-  schedulers, or framework registries.
-- Framework integrations should import explicit `define` and `runtime`
-  subpaths, not the top-level standalone API for framework human wrappers.
+- `@async/flow/run` is not a public subpath. Use `compose([...])` for ordered
+  handler pipelines.
+- The root `@async/flow` entrypoint exports the complete opinionated public
+  surface. Framework integrations may still prefer explicit subpaths when they
+  need a narrower primitive surface.
 
 ## Public API Rules
 
-- Preserve the author-facing store shape: `signals.name` reads values and
-  `signals.name = next` writes writable signals.
+- Preserve the author-facing store shape: `store.name` reads values and
+  `store.name = next` writes writable values.
 - Preserve raw refs separately as `refs.name.get()`, `refs.name.set(...)`, and
   `refs.name.value`.
-- Direct arrays in `on` are invalid. Use `run([...])` to create a handler
+- Direct arrays in `on` are invalid. Use `compose([...])` to create a handler
   function.
 - Plain record signal values are invalid unless wrapped in `signal(value)`.
 - Do not add actor, spawned child, full statechart, parallel-state, history, or

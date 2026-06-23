@@ -1,7 +1,7 @@
 {
   "name": "@async/flow",
   "version": "0.3.0",
-  "description": "Portable signal state and handler runtime for Async packages.",
+  "description": "Portable store, async signal, and handler runtime for Async packages.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.8.0",

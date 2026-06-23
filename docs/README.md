@@ -1,51 +1,63 @@
 # Flow Docs
 
-`@async/flow` provides a small runtime for store state, event dispatch,
-resources, and ordered handler steps.
+`@async/flow` provides a small runtime for store state, event dispatch, async
+signals, and ordered handler steps.
 
 Use these docs when the README is too compact:
 
-- [Layer Guide](layers.md): L1 primitives, L2 Flow events, and L3 workflow
-  helpers.
-- [Signals, Computed, Resources, And Store](state-and-store.md): direct refs,
-  computed values, resource controllers, and store unwrapping.
-- [Resource Lifecycle](resources.md): lazy and immediate resources, load,
-  reload, cancel, cache writes, and snapshots.
+- [Layer Guide](layers.md): L1 signal/computed, async signal, and store
+  examples;
+  L2 Flow events; L2.5 composition; and L3 step helpers.
+- [Signals, Computed, Async Signals, And Store](state-and-store.md): direct
+  refs, computed values, async signal controllers, and store unwrapping.
+- [Async Signal Lifecycle](resources.md): lazy and immediate async signals, load,
+  reload, cancel, manual value writes, and snapshots.
 - [Compose And Status Helpers](compose-and-status.md): `compose`, `parallel`,
-  `remember`, `set`, `update`, `when`, `onError`, `status`, `transition`,
-  `guard`, `can`, `explain`, `describe`, and `matches`.
+  `remember`, `set`, `update`, `when`, `after`, `branch`, `dispatch`,
+  `onError`, `status`, `transition`, `guard`, `can`, `explain`, `describe`,
+  and `matches`.
 
 ## API Layers
 
-The package has three public layers:
+The package has four public layers:
 
-- L1 live primitives and store constructors from `@async/flow/runtime`.
-- L2 import-safe declarations from `@async/flow/define` and live Flow instances
-  from top-level `flow(...)`.
-- L3 workflow helpers such as `compose`, `parallel`, `remember`, `set`,
-  `transition`, and `guard`.
+The root `@async/flow` entrypoint exports the complete opinionated surface.
+Subpaths remain available when a consumer wants a narrower entrypoint.
 
 ```js
-import { compose, flow, parallel, remember, resource, status, transition } from "@async/flow";
-import { defineFlow, defineResource } from "@async/flow/define";
-import { createFlow, createResource, createStore } from "@async/flow/runtime";
+import {
+  after,
+  asyncSignal,
+  branch,
+  compose,
+  createAsyncSignal,
+  createFlow,
+  createStore,
+  defineAsyncSignal,
+  defineFlow,
+  dispatch,
+  flow,
+  parallel,
+  remember,
+  set,
+  status,
+  transition,
+  when
+} from "@async/flow";
 ```
 
 Top-level `flow(...)` creates a live standalone Flow instance. Definition
 helpers are import-safe and do not create shared live state at module load time.
 
-## Removed Public Names
+## Current Names
 
 Use the current names in new code:
 
 ```text
 signals       -> store
 state(...)    -> status(...)
-asyncSignal   -> resource(...)
 flow.run      -> flow.dispatch
 run([...])    -> compose([...])
-@async/flow/run -> @async/flow/compose
+@async/flow/run -> root compose(...) or @async/flow/compose
 refresh       -> reload
 ```
-
-The removed names are not compatibility surfaces.
