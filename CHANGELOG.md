@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 - 2026-06-22
+
+- Added `asyncSignal(...)`, `defineAsyncSignal(...)`, and
+  `createAsyncSignal(...)` as the primary async signal API while preserving the
+  existing resource compatibility names.
+- Added signal-like async signal refs with value reads, writable set/update,
+  restore support, lifecycle status, reload, cancel, stale-run suppression, and
+  native abort support.
+- Added options-first callback arguments for computed values and async signal
+  loaders, with Flow context exposed on the function receiver.
+- Added public step helpers for derived store writes, branching, dispatching,
+  and delayed follow-up events.
+- Added the GitHub Pages documentation target and generated workflow support for
+  publishing the package docs site.
+
 ## 0.3.0 - 2026-06-22
 
 - Added `parallel(...)` for fan-out/fan-in effects inside composed handlers.
