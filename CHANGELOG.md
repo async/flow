@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 - 2026-06-23
+
+- Added projected Flow instance store values, including direct `flow.name`
+  reads and writes for public store entries.
+- Added `_` store field support for internal async signal controllers, plus a
+  non-enumerable `flow._` namespace for integration code.
+- Added getter-backed computed store entries and direct computed receiver reads
+  such as `this.count`.
+- Added `bool(...)`, `every(...)`, `some(...)`, and `not(...)` helpers for
+  composing boolean conditions across `when(...)`, `branch(...)`,
+  `guard(...)`, and `transition(...)`.
+- Renamed the async signal lifecycle guide from resources to async signals
+  while preserving resource compatibility exports.
+
 ## 0.4.0 - 2026-06-22
 
 - Added `asyncSignal(...)`, `defineAsyncSignal(...)`, and
@@ -12,7 +26,7 @@
   loaders, with Flow context exposed on the function receiver.
 - Added public step helpers for derived store writes, branching, dispatching,
   and delayed follow-up events.
-- Added the GitHub Pages documentation target and generated workflow support for
+- Added the GitHub Pages documentation target and pipeline workflow support for
   publishing the package docs site.
 
 ## 0.3.0 - 2026-06-22
