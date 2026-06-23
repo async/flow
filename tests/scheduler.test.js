@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  computed,
   createDefaultScheduler,
   createFlow,
   createSignal,
@@ -144,7 +145,9 @@ test("createFlow passes the scheduler to owned primitives and batches handlers",
     {
       store: {
         items: [],
-        count: (store) => store.items.length
+        count: computed(function () {
+          return this.store.items.length;
+        })
       },
       on: {
         add: (store, input) => ({

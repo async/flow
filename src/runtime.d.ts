@@ -12,6 +12,7 @@ export type Signal<T = unknown> = {
   update(fn: (current: T) => T): T;
   subscribe(fn: (value: T) => void): () => void;
   snapshot(): T;
+  restore(snapshot: T): void;
 };
 
 export type Status<T = unknown> = Signal<T> & {
@@ -27,31 +28,60 @@ export type Computed<T = unknown> = {
   snapshot(): T;
 };
 
-export type SignalLike<T = unknown> = Signal<T> | Status<T> | Computed<T>;
+export type ComputedOptions = {
+  readonly arguments?: readonly unknown[] | ((store: Record<string, unknown> | undefined) => readonly unknown[]);
+} & Record<string, unknown>;
 
-export type ResourceSnapshot<T = unknown> = {
+export type ComputedReceiver = {
+  readonly store?: Record<string, unknown>;
+  readonly refs?: Record<string, unknown>;
+  readonly name?: string;
+};
+
+export type AsyncSignalOptions = {
+  readonly immediate?: boolean;
+  readonly arguments?: readonly unknown[] | ((store: Record<string, unknown> | undefined) => readonly unknown[]);
+} & Record<string, unknown>;
+
+export type AsyncSignalReceiver = {
+  readonly store?: Record<string, unknown>;
+  readonly refs?: Record<string, unknown>;
+  readonly resources?: Record<string, unknown>;
+  readonly name?: string;
+  readonly signal: AbortSignal;
+  readonly version: number;
+  readonly args: readonly unknown[];
+};
+
+export type AsyncSignalSnapshot<T = unknown> = {
   value: T | undefined;
   status: "idle" | "loading" | "ready" | "error";
   error: unknown;
   version: number;
 };
 
-export type Resource<T = unknown, Input = unknown> = {
-  readonly kind: "resource";
+export type AsyncSignal<T = unknown, Input = unknown> = {
+  readonly kind: "asyncSignal";
   readonly value: T | undefined;
   readonly status: "idle" | "loading" | "ready" | "error";
   readonly loading: boolean;
   readonly ready: boolean;
   readonly error: unknown;
   readonly version: number;
+  get(): T | undefined;
   load(input?: Input): T | PromiseLike<T>;
   reload(input?: Input): PromiseLike<T>;
   set(next: T): T;
+  update(fn: (current: T | undefined) => T): T;
   cancel(reason?: unknown): "idle" | "loading" | "ready" | "error";
-  subscribe(fn: (resource: Resource<T, Input>) => void): () => void;
-  snapshot(): ResourceSnapshot<T>;
-  restore(snapshot: ResourceSnapshot<T> | T): void;
+  subscribe(fn: (value: T | undefined) => void): () => void;
+  snapshot(): AsyncSignalSnapshot<T>;
+  restore(snapshot: AsyncSignalSnapshot<T> | T): void;
 };
+
+export type ResourceSnapshot<T = unknown> = AsyncSignalSnapshot<T>;
+export type Resource<T = unknown, Input = unknown> = AsyncSignal<T, Input>;
+export type SignalLike<T = unknown> = Signal<T> | Status<T> | Computed<T> | AsyncSignal<T>;
 
 export type FlowChange = {
   name?: string;
@@ -154,22 +184,25 @@ export function createStatus<T>(
   allowed?: readonly T[],
   options?: { scheduler?: FlowScheduler; name?: string }
 ): Status<T>;
-export function createComputed<T>(compute: () => T, options?: { scheduler?: FlowScheduler }): Computed<T>;
-export function createResource<T = unknown, Input = unknown>(
-  loader: (
-    store: Record<string, unknown>,
-    tools: { signal: AbortSignal; input: Input; version: number }
-  ) => T | PromiseLike<T>,
-  runtimeOptions?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; name?: string }
-): Resource<T, Input>;
-export function createResource<T = unknown, Input = unknown>(
-  options: { immediate?: boolean } & Record<string, unknown>,
-  loader: (
-    store: Record<string, unknown>,
-    tools: { signal: AbortSignal; input: Input; version: number }
-  ) => T | PromiseLike<T>,
-  runtimeOptions?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; name?: string }
-): Resource<T, Input>;
+export function createComputed<T>(
+  compute: (this: ComputedReceiver, ...args: unknown[]) => T,
+  options?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; refs?: Record<string, unknown>; name?: string }
+): Computed<T>;
+export function createComputed<T>(
+  options: ComputedOptions,
+  compute: (this: ComputedReceiver, ...args: unknown[]) => T,
+  runtimeOptions?: { scheduler?: FlowScheduler; store?: Record<string, unknown>; refs?: Record<string, unknown>; name?: string }
+): Computed<T>;
+export function createAsyncSignal<T = unknown, Input = unknown>(
+  loader: (this: AsyncSignalReceiver, ...args: Input[]) => T | PromiseLike<T>,
+  runtimeOptions?: { scheduler?: FlowScheduler; name?: string }
+): AsyncSignal<T, Input>;
+export function createAsyncSignal<T = unknown, Input = unknown>(
+  options: AsyncSignalOptions,
+  loader: (this: AsyncSignalReceiver, ...args: Input[]) => T | PromiseLike<T>,
+  runtimeOptions?: { scheduler?: FlowScheduler; name?: string }
+): AsyncSignal<T, Input>;
+export const createResource: typeof createAsyncSignal;
 export function createStore(
   declarations?: Record<string, unknown>,
   options?: { scheduler?: FlowScheduler; rejectPlainObjects?: boolean; context?: Record<string, unknown> }

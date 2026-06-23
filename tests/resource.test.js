@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   RESOURCE,
   RESOURCE_IMMEDIATE,
+  asyncSignal,
+  createAsyncSignal,
   createResource,
+  defineAsyncSignal,
   defineResource,
   flow,
   isImmediateResource,
@@ -11,10 +14,12 @@ import {
   resource
 } from "@async/flow";
 
-test("resource and defineResource create import-safe lazy declarations", () => {
+test("asyncSignal and compatibility resource names create import-safe declarations", () => {
   const loader = async () => "hello";
-  const greeting = resource(loader);
-  const profile = defineResource({ immediate: true }, loader);
+  const greeting = asyncSignal(loader);
+  const profile = defineAsyncSignal({ immediate: true }, loader);
+  const compatibility = resource(loader);
+  const explicitCompatibility = defineResource(loader);
 
   assert.equal(greeting[RESOURCE], true);
   assert.equal(greeting[RESOURCE_IMMEDIATE], undefined);
@@ -22,17 +27,25 @@ test("resource and defineResource create import-safe lazy declarations", () => {
   assert.equal(greeting.options.immediate, false);
   assert.equal(profile[RESOURCE], true);
   assert.equal(profile[RESOURCE_IMMEDIATE], true);
+  assert.equal(compatibility[RESOURCE], true);
+  assert.equal(explicitCompatibility[RESOURCE], true);
   assert.equal(isResource(greeting), true);
   assert.equal(isImmediateResource(greeting), false);
   assert.equal(isImmediateResource(profile), true);
 });
 
-test("createResource is lazy by default and loads from idle loading ready and error", async () => {
+test("createAsyncSignal is lazy by default and loads from idle loading ready and error", async () => {
   let calls = 0;
   const first = deferred();
-  const api = createResource(async (_store, tools) => {
+  const seen = [];
+  const api = createAsyncSignal(async function (...args) {
     calls += 1;
-    if (tools.input === "fail") {
+    seen.push({
+      args,
+      signal: this.signal,
+      version: this.version
+    });
+    if (args[0] === "fail") {
       throw new Error("failed");
     }
     return first.promise;
@@ -46,17 +59,22 @@ test("createResource is lazy by default and loads from idle loading ready and er
   assert.equal(api.load(), pending);
   await Promise.resolve();
   assert.equal(calls, 1);
+  assert.deepEqual(seen.map(({ args, version }) => ({ args, version })), [
+    { args: ["first"], version: 1 }
+  ]);
+  assert.equal(seen[0].signal instanceof AbortSignal, true);
 
   first.resolve("hello");
   assert.equal(await pending, "hello");
   assert.equal(api.status, "ready");
   assert.equal(api.ready, true);
+  assert.equal(api.get(), "hello");
   assert.equal(api.value, "hello");
   assert.equal(api.load(), "hello");
 
-  const failing = createResource(async (_store, tools) => {
+  const failing = createAsyncSignal(async function (input) {
     calls += 1;
-    if (tools.input === "fail") {
+    if (input === "fail") {
       throw new Error("failed");
     }
     return "recovered";
@@ -71,9 +89,14 @@ test("createResource is lazy by default and loads from idle loading ready and er
 
 test("reload aborts current work and stale completions do not overwrite state", async () => {
   const runs = [];
-  const api = createResource(async (_store, tools) => {
+  const api = createAsyncSignal(async function (...args) {
     const run = deferred();
-    runs.push({ ...tools, ...run });
+    runs.push({
+      args,
+      signal: this.signal,
+      version: this.version,
+      ...run
+    });
     return run.promise;
   });
 
@@ -97,28 +120,34 @@ test("reload aborts current work and stale completions do not overwrite state", 
   assert.equal(await second, "fresh");
   assert.equal(api.status, "ready");
   assert.equal(api.value, "fresh");
+  assert.deepEqual(runs.map(({ args, version }) => ({ args, version })), [
+    { args: ["first"], version: 1 },
+    { args: ["second"], version: 2 }
+  ]);
 });
 
 test("set updates resource value without running the loader", () => {
   let calls = 0;
-  const api = createResource(async () => {
+  const api = createAsyncSignal(async () => {
     calls += 1;
     return "loaded";
   });
 
   assert.equal(api.set("manual"), "manual");
-  assert.equal(api.value, "manual");
+  assert.equal(api.update((value) => `${value}!`), "manual!");
+  assert.equal(api.value, "manual!");
+  assert.equal(api.get(), "manual!");
   assert.equal(api.status, "ready");
   assert.equal(calls, 0);
 });
 
 test("cancel settles to idle without value and ready with value", async () => {
   const emptyRun = deferred();
-  const empty = createResource(async (_store, tools) => {
-    if (tools.signal.aborted) {
+  const empty = createAsyncSignal(async function () {
+    if (this.signal.aborted) {
       throw toAbortError();
     }
-    tools.signal.addEventListener("abort", () => emptyRun.reject(toAbortError()));
+    this.signal.addEventListener("abort", () => emptyRun.reject(toAbortError()));
     return emptyRun.promise;
   });
 
@@ -128,11 +157,11 @@ test("cancel settles to idle without value and ready with value", async () => {
   await assert.rejects(() => emptyPromise, /aborted/);
 
   const loadedRun = deferred();
-  const loaded = createResource(async (_store, tools) => {
-    if (tools.signal.aborted) {
+  const loaded = createAsyncSignal(async function () {
+    if (this.signal.aborted) {
       throw toAbortError();
     }
-    tools.signal.addEventListener("abort", () => loadedRun.reject(toAbortError()));
+    this.signal.addEventListener("abort", () => loadedRun.reject(toAbortError()));
     return loadedRun.promise;
   });
 
@@ -144,78 +173,81 @@ test("cancel settles to idle without value and ready with value", async () => {
   await assert.rejects(() => loadedPromise, /aborted/);
 });
 
-test("loaders receive native abort signal input and version", async () => {
+test("loaders receive configured explicit args and receiver context", async () => {
   const seen = [];
-  const api = createResource(async (store, tools) => {
+  const api = createAsyncSignal({ arguments: ["default"] }, async function (...args) {
     seen.push({
-      userId: store.userId,
-      signal: tools.signal,
-      input: tools.input,
-      version: tools.version
+      args,
+      store: this.store,
+      signal: this.signal,
+      version: this.version,
+      receiverArgs: this.args
     });
-    return `${store.userId}:${tools.input}`;
-  }, {
-    store: {
-      userId: "user_123"
-    }
+    return args.join(":");
   });
 
-  assert.equal(await api.load("profile"), "user_123:profile");
+  assert.equal(await api.load(), "default");
+  assert.equal(await api.reload("override"), "override");
   assert.equal(seen[0].signal instanceof AbortSignal, true);
-  assert.deepEqual(seen.map(({ userId, input, version }) => ({ userId, input, version })), [
-    { userId: "user_123", input: "profile", version: 1 }
+  assert.deepEqual(seen.map(({ args, store, version, receiverArgs }) => ({ args, store, version, receiverArgs })), [
+    { args: ["default"], store: undefined, version: 1, receiverArgs: ["default"] },
+    { args: ["override"], store: undefined, version: 2, receiverArgs: ["override"] }
   ]);
 });
 
-test("lazy resources stay resource objects in store and expose controllers through flow resources", async () => {
+test("lazy async signals read as values in store and expose controllers through refs and resources", async () => {
   const greetingFlow = flow({
     store: {
       name: "World",
-      greeting: resource(async (store, { signal }) => {
-        assert.equal(signal instanceof AbortSignal, true);
-        return `Hello ${store.name}`;
+      greeting: asyncSignal({ arguments: (store) => [store.name] }, async function (name) {
+        assert.equal(this.signal instanceof AbortSignal, true);
+        assert.equal(this.store.name, name);
+        assert.equal(this.refs.greeting, this.resources.greeting);
+        assert.equal(this.name, "greeting");
+        return `Hello ${name}`;
       })
     },
     on: {
-      fetch(store) {
-        return store.greeting.load();
+      fetch() {
+        return this.refs.greeting.load();
       },
-      retry(store) {
-        return store.greeting.reload();
+      retry() {
+        return this.refs.greeting.reload();
       },
       replace(store, input) {
-        return store.greeting.set(input.value);
+        store.greeting = input.value;
+        return store.greeting;
       },
       cancel(store) {
-        return store.greeting.cancel();
+        return this.resources.greeting.cancel();
       }
     }
   });
 
-  assert.equal(greetingFlow.store.greeting.status, "idle");
-  assert.equal(greetingFlow.resources.greeting, greetingFlow.store.greeting);
+  assert.equal(greetingFlow.store.greeting, undefined);
+  assert.equal(greetingFlow.refs.greeting.kind, "asyncSignal");
+  assert.equal(greetingFlow.resources.greeting, greetingFlow.refs.greeting);
   assert.equal(await greetingFlow.fetch(), "Hello World");
-  assert.equal(greetingFlow.store.greeting.value, "Hello World");
+  assert.equal(greetingFlow.store.greeting, "Hello World");
   assert.equal(await greetingFlow.retry(), "Hello World");
   assert.equal(greetingFlow.replace({ value: "Hi World" }), "Hi World");
   assert.equal(greetingFlow.cancel(), "ready");
-  assert.throws(() => {
-    greetingFlow.store.greeting = "direct";
-  }, /Resource store values/);
+  greetingFlow.store.greeting = "direct";
+  assert.equal(greetingFlow.refs.greeting.get(), "direct");
 });
 
-test("immediate resources are value-like in store and controller-like through receiver resources", async () => {
+test("immediate async signals are value-like in store and controller-like through refs and resources", async () => {
   let calls = 0;
   const profile = flow({
     store: {
-      user: resource({ immediate: true }, async () => {
+      user: asyncSignal({ immediate: true }, async () => {
         calls += 1;
         return `Ada ${calls}`;
       })
     },
     on: {
       refreshUser() {
-        return this.resources.user.reload();
+        return this.refs.user.reload();
       },
       setUser(_store, input) {
         return this.resources.user.set(input.name);
@@ -223,27 +255,27 @@ test("immediate resources are value-like in store and controller-like through re
     }
   });
 
-  assert.equal(profile.resources.user.status, "loading");
+  assert.equal(profile.refs.user, profile.resources.user);
+  assert.equal(profile.refs.user.status, "loading");
   assert.equal(profile.store.user, undefined);
-  assert.equal(await profile.resources.user.load(), "Ada 1");
+  assert.equal(await profile.refs.user.load(), "Ada 1");
   assert.equal(profile.store.user, "Ada 1");
   assert.equal(await profile.refreshUser(), "Ada 2");
   assert.equal(profile.store.user, "Ada 2");
   assert.equal(profile.setUser({ name: "Grace" }), "Grace");
   assert.equal(profile.store.user, "Grace");
-  assert.throws(() => {
-    profile.store.user = "direct";
-  }, /Resource store values/);
+  profile.store.user = "direct";
+  assert.equal(profile.refs.user.value, "direct");
 });
 
 test("resource snapshot and restore preserve lifecycle state", async () => {
   const first = flow({
     store: {
-      greeting: resource(async () => "Hello")
+      greeting: asyncSignal(async () => "Hello")
     }
   });
 
-  await first.store.greeting.load();
+  await first.refs.greeting.load();
   const snapshot = first.snapshot();
 
   assert.deepEqual(snapshot.greeting, {
@@ -255,13 +287,31 @@ test("resource snapshot and restore preserve lifecycle state", async () => {
 
   const second = flow({
     store: {
-      greeting: resource(async () => "Ignored")
+      greeting: asyncSignal(async () => "Ignored")
     }
   });
 
   second.restore(snapshot);
-  assert.equal(second.store.greeting.status, "ready");
-  assert.equal(second.store.greeting.value, "Hello");
+  assert.equal(second.refs.greeting.status, "ready");
+  assert.equal(second.store.greeting, "Hello");
+});
+
+test("createResource remains a compatibility alias for createAsyncSignal", async () => {
+  const api = createResource(async () => "compat");
+
+  assert.equal(api.kind, "asyncSignal");
+  assert.equal(await api.load(), "compat");
+  assert.equal(api.get(), "compat");
+});
+
+test("invalid configured async signal arguments throw clear errors", async () => {
+  assert.throws(
+    () => createAsyncSignal({ arguments: "bad" }, async () => "ignored"),
+    /options\.arguments must be an array or function/
+  );
+
+  const api = createAsyncSignal({ arguments: () => "bad" }, async () => "ignored");
+  assert.throws(() => api.load(), /options\.arguments function must return an array/);
 });
 
 function deferred() {

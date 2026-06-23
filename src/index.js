@@ -5,6 +5,7 @@ export {
   defineSignal,
   defineStatus,
   defineComputed,
+  defineAsyncSignal,
   defineResource,
   SIGNAL,
   STATUS,
@@ -14,7 +15,10 @@ export {
   defineSignal as signal,
   defineComputed as computed,
   defineStatus as status,
+  defineAsyncSignal as asyncSignal,
   defineResource as resource,
+  isAsyncSignal,
+  isAsyncSignalDefinition,
   isResource,
   isImmediateResource
 } from "./define.js";
@@ -24,6 +28,7 @@ export {
   createSignal,
   createStatus,
   createComputed,
+  createAsyncSignal,
   createResource
 } from "./runtime.js";
 export {
@@ -35,7 +40,10 @@ export {
 export {
   set,
   update,
+  dispatch,
+  after,
   when,
+  branch,
   onError,
   TRANSITION,
   GUARD,

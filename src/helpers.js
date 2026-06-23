@@ -7,7 +7,7 @@ export const GUARD = Symbol.for("@async/flow.guard");
 export const status = defineStatus;
 
 export function set(nameOrUpdates, maybeValue) {
-  return function setStep(store) {
+  return function setStep(store, input, previous) {
     const updates =
       typeof nameOrUpdates === "string"
         ? { [nameOrUpdates]: maybeValue }
@@ -16,9 +16,29 @@ export function set(nameOrUpdates, maybeValue) {
     assertUpdateObject(updates, "set");
 
     for (const [name, value] of Object.entries(updates)) {
-      store[name] = value;
+      store[name] = resolveStepValue(value, this, store, input, previous);
     }
 
+    return undefined;
+  };
+}
+
+export function dispatch(eventName, input) {
+  assertEventName(eventName, "dispatch");
+
+  return function dispatchStep(store, currentInput, previous) {
+    assertFlowDispatchReceiver(this, "dispatch");
+    return this.dispatch(eventName, resolveOptionalStepValue(input, this, store, currentInput, previous));
+  };
+}
+
+export function after(ms, eventName, input) {
+  assertDelay(ms, "after");
+  assertEventName(eventName, "after");
+
+  return function afterStep(store, currentInput, previous) {
+    assertFlowAfterReceiver(this, "after");
+    this.after(ms, eventName, resolveOptionalStepValue(input, this, store, currentInput, previous));
     return undefined;
   };
 }
@@ -45,6 +65,20 @@ export function when(predicate) {
 
   return function whenStep(store, input, previous) {
     return predicate(store, input, previous) ? undefined : createComposeStop();
+  };
+}
+
+export function branch(cases) {
+  const normalized = normalizeBranchCases(cases);
+
+  return function branchStep(store, input, previous) {
+    for (const entry of normalized) {
+      if (entry.default || entry.when.call(this, store, input, previous)) {
+        return entry.then.call(this, store, input, previous);
+      }
+    }
+
+    return undefined;
   };
 }
 
@@ -140,9 +174,9 @@ export function transition(statusName, config) {
 export function can(statusNameOrEventName, eventName) {
   if (arguments.length === 1) {
     assertEventName(statusNameOrEventName, "can");
-    return defineComputed((store, context) =>
-      Boolean(context?.explain?.(statusNameOrEventName, undefined, store)?.allowed)
-    );
+    return defineComputed(function () {
+      return Boolean(this.explain?.(statusNameOrEventName, undefined, this.store)?.allowed);
+    });
   }
 
   assertStatusName(statusNameOrEventName, "can");
@@ -150,8 +184,8 @@ export function can(statusNameOrEventName, eventName) {
     throw new TypeError("can(...) requires an event name.");
   }
 
-  return defineComputed((store, context) => {
-    const explanation = context?.explain?.(eventName, undefined, store, {
+  return defineComputed(function () {
+    const explanation = this.explain?.(eventName, undefined, this.store, {
       statusName: statusNameOrEventName
     });
 
@@ -161,9 +195,9 @@ export function can(statusNameOrEventName, eventName) {
 
 export function matches(statusName, value) {
   assertStatusName(statusName, "matches");
-  return defineComputed((store, context) =>
-    Object.is(store[resolveStatusName(context, statusName)], value)
-  );
+  return defineComputed(function () {
+    return Object.is(this.store[resolveStatusName(this, statusName)], value);
+  });
 }
 
 function assertStatusName(value, helperName) {
@@ -178,6 +212,24 @@ function assertEventName(value, helperName) {
   }
 }
 
+function assertDelay(value, helperName) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new TypeError(`${helperName}(...) requires a non-negative millisecond delay.`);
+  }
+}
+
+function assertFlowDispatchReceiver(receiver, helperName) {
+  if (!receiver || typeof receiver.dispatch !== "function") {
+    throw new TypeError(`${helperName}(...) requires a Flow handler receiver.`);
+  }
+}
+
+function assertFlowAfterReceiver(receiver, helperName) {
+  if (!receiver || typeof receiver.after !== "function") {
+    throw new TypeError(`${helperName}(...) requires a Flow handler receiver.`);
+  }
+}
+
 function assertUpdateObject(value, helperName) {
   if (
     value === null ||
@@ -185,6 +237,82 @@ function assertUpdateObject(value, helperName) {
     Array.isArray(value)
   ) {
     throw new TypeError(`${helperName}(...) requires a store update object.`);
+  }
+}
+
+function resolveStepValue(value, receiver, store, input, previous) {
+  return typeof value === "function"
+    ? value.call(receiver, store, input, previous)
+    : value;
+}
+
+function resolveOptionalStepValue(value, receiver, store, input, previous) {
+  return value === undefined
+    ? undefined
+    : resolveStepValue(value, receiver, store, input, previous);
+}
+
+function normalizeBranchCases(cases) {
+  if (!Array.isArray(cases) || cases.length === 0) {
+    throw new TypeError("branch(...) requires a non-empty array of cases.");
+  }
+
+  return cases.map((entry, index) => normalizeBranchCase(entry, index));
+}
+
+function normalizeBranchCase(entry, index) {
+  if (Array.isArray(entry)) {
+    if (entry.length !== 2) {
+      throw new TypeError("branch(...) tuple cases must be [predicate, handler].");
+    }
+
+    const [whenFn, thenFn] = entry;
+    assertBranchPredicate(whenFn);
+    assertBranchHandler(thenFn);
+    return {
+      default: false,
+      when: whenFn,
+      then: thenFn
+    };
+  }
+
+  if (typeof entry === "function") {
+    return {
+      default: true,
+      when: undefined,
+      then: entry
+    };
+  }
+
+  if (isPlainObject(entry)) {
+    const isDefault = entry.default === true || !Object.hasOwn(entry, "when");
+    const whenFn = entry.when;
+    const thenFn = entry.then;
+
+    if (!isDefault) {
+      assertBranchPredicate(whenFn);
+    }
+
+    assertBranchHandler(thenFn);
+    return {
+      default: isDefault,
+      when: whenFn,
+      then: thenFn
+    };
+  }
+
+  throw new TypeError(`branch(...) case ${index + 1} must be a tuple, object, or default handler.`);
+}
+
+function assertBranchPredicate(value) {
+  if (typeof value !== "function") {
+    throw new TypeError("branch(...) cases require predicate functions.");
+  }
+}
+
+function assertBranchHandler(value) {
+  if (typeof value !== "function") {
+    throw new TypeError("branch(...) cases require handler functions.");
   }
 }
 

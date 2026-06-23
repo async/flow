@@ -2,7 +2,6 @@ export {
   defineAsyncSignal,
   defineAsyncSignal as asyncSignal,
   defineResource,
-  defineResource as resource,
   isAsyncSignal,
   isAsyncSignalDefinition,
   isImmediateResource,
@@ -14,16 +13,4 @@ export {
 export {
   createAsyncSignal,
   createResource
-} from "./runtime.js";
-export type {
-  FlowAsyncSignalDefinition,
-  FlowAsyncSignalOptions,
-  FlowResourceDefinition,
-  FlowResourceOptions
-} from "./define.js";
-export type {
-  AsyncSignal,
-  AsyncSignalSnapshot,
-  Resource,
-  ResourceSnapshot
 } from "./runtime.js";

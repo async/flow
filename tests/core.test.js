@@ -5,7 +5,7 @@ import {
   defineFlow,
   flow,
   guard,
-  resource,
+  asyncSignal,
   signal,
   status,
   STATUS,
@@ -63,8 +63,10 @@ test("createStore normalizes values and exposes refs behind a store proxy", () =
   const cart = createStore({
     items: [],
     selectedId: signal(null),
-    count: (store) => store.items.length,
-    isEmpty: computed((store) => store.count === 0),
+    count: computed(function () {
+      return this.store.items.length;
+    }),
+    isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0),
     phase: status("idle", ["idle", "ready"])
   });
 
@@ -87,8 +89,10 @@ test("flow creates store and separate refs", () => {
     store: {
       items: [],
       selectedId: signal(null),
-      count: (store) => store.items.length,
-      isEmpty: computed((store) => store.count === 0)
+      count: computed(function () {
+        return this.store.items.length;
+      }),
+      isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0)
     },
     on: {
       add(store, input) {
@@ -175,7 +179,9 @@ test("handler arrays are invalid and returned objects update writable store valu
   const counter = flow({
     store: {
       count: 0,
-      doubled: (store) => store.count * 2
+      doubled: computed(function () {
+        return this.store.count * 2;
+      })
     },
     on: {
       increment: (store) => ({ count: store.count + 1 }),
@@ -224,7 +230,9 @@ test("restore updates writable refs and recomputes computed refs", () => {
   const cart = flow({
     store: {
       items: [],
-      count: (store) => store.items.length
+      count: computed(function () {
+        return this.store.items.length;
+      })
     }
   });
 
@@ -237,14 +245,14 @@ test("restore updates writable refs and recomputes computed refs", () => {
   });
 });
 
-test("flow describe returns fresh public store resource handler transition and guard metadata", () => {
+test("flow describe returns fresh public store async signal handler transition and guard metadata", () => {
   const checkout = flow({
     store: {
       step: status("shipping", ["shipping", "payment", "review"]),
       settings: signal({ currency: "USD" }),
       count: 0,
-      doubled: (store) => store.count * 2,
-      user: resource(async () => ({ id: "user_123" }))
+      doubled: computed({ arguments: (store) => [store.count] }, (count) => count * 2),
+      user: asyncSignal(async () => ({ id: "user_123" }))
     },
     on: {
       next: transition("step", {
@@ -276,6 +284,11 @@ test("flow describe returns fresh public store resource handler transition and g
   assert.equal(description.store.doubled.kind, "computed");
   assert.equal(description.store.doubled.writable, false);
   assert.equal(description.store.doubled.value, 0);
+  assert.deepEqual(description.store.user, {
+    kind: "asyncSignal",
+    writable: true,
+    value: undefined
+  });
   assert.deepEqual(description.resources.user, {
     kind: "resource",
     status: "idle",
@@ -369,6 +382,46 @@ test("old runner subpath is not public", async () => {
     import("@async/flow/run"),
     /Package subpath|Cannot find/
   );
+});
+
+test("root entrypoint exposes the opinionated public surface", async () => {
+  const root = await import("@async/flow");
+  const names = [
+    "after",
+    "asyncSignal",
+    "branch",
+    "can",
+    "compose",
+    "computed",
+    "createAsyncSignal",
+    "createComputed",
+    "createFlow",
+    "createSignal",
+    "createStatus",
+    "createStore",
+    "defineAsyncSignal",
+    "defineComputed",
+    "defineFlow",
+    "defineSignal",
+    "defineStatus",
+    "dispatch",
+    "flow",
+    "guard",
+    "matches",
+    "onError",
+    "parallel",
+    "remember",
+    "set",
+    "signal",
+    "status",
+    "transition",
+    "update",
+    "when"
+  ];
+
+  for (const name of names) {
+    assert.equal(typeof root[name], "function", `${name} should be exported from root`);
+  }
 });
 
 test("arrow handlers work when they only need store and input", () => {

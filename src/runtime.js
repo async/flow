@@ -90,6 +90,10 @@ export function createSignal(initial, options = {}) {
 
     snapshot() {
       return value;
+    },
+
+    restore(snapshot) {
+      ref.set(snapshot);
     }
   };
 
@@ -144,12 +148,18 @@ export function createStatus(initial, allowed, options = {}) {
   return ref;
 }
 
-export function createComputed(compute, options = {}) {
+export function createComputed(optionsOrCompute, maybeCompute, maybeRuntimeOptions) {
+  const { options, compute, runtimeOptions } = normalizeCreateComputedArgs(
+    optionsOrCompute,
+    maybeCompute,
+    maybeRuntimeOptions
+  );
+
   if (typeof compute !== "function") {
     throw new TypeError("Computed store value requires a function.");
   }
 
-  const scheduler = resolveScheduler(options);
+  const scheduler = resolveScheduler(runtimeOptions);
   const subscribers = new Set();
   let value;
   let initialized = false;
@@ -189,9 +199,14 @@ export function createComputed(compute, options = {}) {
 
     let next;
     try {
-      next = compute();
+      const args = resolveConfiguredArguments("computed", options.arguments, runtimeOptions.store);
+      next = compute.apply(createComputedReceiver(runtimeOptions), args);
     } finally {
       dependencyStack.pop();
+    }
+
+    if (isPromiseLike(next)) {
+      throw new TypeError("Computed callbacks must return synchronously.");
     }
 
     const wasInitialized = initialized;
@@ -235,7 +250,7 @@ export function createComputed(compute, options = {}) {
   return ref;
 }
 
-export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
+export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
   const { options, loader, runtimeOptions } = normalizeCreateResourceArgs(
     optionsOrLoader,
     maybeLoader,
@@ -243,7 +258,9 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
   );
   const scheduler = resolveScheduler(runtimeOptions);
   const subscribers = new Set();
-  const store = runtimeOptions.store ?? {};
+  let store;
+  let refs;
+  let resources;
   let status = "idle";
   let value;
   let hasValue = false;
@@ -253,10 +270,10 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
 
   const resource = {
     [RESOURCE]: true,
-    kind: "resource",
+    kind: "asyncSignal",
 
     get value() {
-      return value;
+      return resource.get();
     },
 
     get status() {
@@ -279,7 +296,12 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
       return version;
     },
 
-    load(input) {
+    get() {
+      trackDependency(resource);
+      return value;
+    },
+
+    load(...args) {
       if (currentRun) {
         return currentRun.promise;
       }
@@ -288,15 +310,15 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
         return value;
       }
 
-      return startRun(input);
+      return startRun(args);
     },
 
-    reload(input) {
+    reload(...args) {
       if (currentRun) {
         cancelCurrentRun();
       }
 
-      return startRun(input);
+      return startRun(args);
     },
 
     set(next) {
@@ -310,6 +332,14 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
       version += 1;
       setStatus("ready");
       return value;
+    },
+
+    update(fn) {
+      if (typeof fn !== "function") {
+        throw new TypeError("Async signal update requires a function.");
+      }
+
+      return resource.set(fn(value));
     },
 
     cancel(reason) {
@@ -353,6 +383,15 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
       }
 
       resource.set(snapshot);
+    },
+
+    _attachStore(nextStore, nextRefs, nextResources) {
+      store = nextStore;
+      refs = nextRefs;
+      resources = nextResources;
+      if (runtimeOptions.deferImmediate === true && options.immediate === true) {
+        resource.load();
+      }
     }
   };
 
@@ -364,18 +403,20 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
     });
   }
 
-  if (options.immediate === true) {
+  if (options.immediate === true && runtimeOptions.deferImmediate !== true) {
     resource.load();
   }
 
   return resource;
 
-  function startRun(input) {
+  function startRun(explicitArgs) {
     const controller = new AbortController();
     const runVersion = version + 1;
+    const args = resolveConfiguredArguments("asyncSignal", options.arguments, store, explicitArgs);
     const run = {
       controller,
       version: runVersion,
+      args,
       promise: undefined
     };
 
@@ -386,11 +427,15 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
 
     run.promise = Promise.resolve()
       .then(() =>
-        loader(store, {
+        loader.apply(createAsyncSignalReceiver({
+          store,
+          refs,
+          resources,
+          name: runtimeOptions.name,
           signal: controller.signal,
-          input,
-          version: runVersion
-        })
+          version: runVersion,
+          args
+        }), args)
       )
       .then((next) => {
         if (currentRun !== run) {
@@ -443,14 +488,16 @@ export function createResource(optionsOrLoader, maybeLoader, maybeRuntimeOptions
   }
 
   function notify() {
-    const enqueue = scheduler.enqueue ?? ((fn) => fn());
+      const enqueue = scheduler.enqueue ?? ((fn) => fn());
     enqueue(() => {
       for (const subscriber of [...subscribers]) {
-        subscriber(resource);
+        subscriber(value);
       }
     });
   }
 }
+
+export const createResource = createAsyncSignal;
 
 export function createStore(declarations = {}, options = {}) {
   if (!isPlainObject(declarations)) {
@@ -474,7 +521,16 @@ export function createStore(declarations = {}, options = {}) {
     }
 
     if (isResourceLike(declaration)) {
-      resources[name] = declaration;
+      const ref = isResourceDefinition(declaration)
+        ? createAsyncSignal(declaration, {
+            scheduler,
+            name,
+            deferImmediate: true
+          })
+        : declaration;
+      refs[name] = ref;
+      resources[name] = ref;
+      writableNames.add(name);
       continue;
     }
 
@@ -498,19 +554,17 @@ export function createStore(declarations = {}, options = {}) {
 
   store = createStoreProxy(refs, resources, plainValues, writableNames);
 
-  for (const [name, declaration] of Object.entries(resources)) {
-    if (isResourceDefinition(declaration)) {
-      resources[name] = createResource(declaration, {
-        scheduler,
-        store,
-        name
-      });
+  for (const ref of Object.values(refs)) {
+    if (ref?.[RESOURCE] && typeof ref._attachStore === "function") {
+      ref._attachStore(store, refs, resources);
     }
   }
 
   for (const [name, declaration] of computedEntries) {
     const compute = typeof declaration === "function" ? declaration : declaration.compute;
-    refs[name] = createComputed(() => compute(store, context), { scheduler });
+    refs[name] = typeof declaration === "function"
+      ? createComputed(compute, { scheduler, store, refs, name, context })
+      : createComputed(declaration.options ?? {}, compute, { scheduler, store, refs, name, context });
   }
 
   return {
@@ -527,6 +581,10 @@ export function createStore(declarations = {}, options = {}) {
       }
 
       for (const [name, resource] of Object.entries(resources)) {
+        if (refs[name] === resource) {
+          continue;
+        }
+
         snapshot[name] = resource.snapshot();
       }
 
@@ -546,6 +604,8 @@ export function createStore(declarations = {}, options = {}) {
 
         if (ref?.[SIGNAL] || ref?.[STATUS]) {
           ref.set(value);
+        } else if (ref?.[RESOURCE]) {
+          ref.restore(value);
         } else if (resources[name]) {
           resources[name].restore(value);
         } else if (Object.hasOwn(plainValues, name)) {
@@ -731,6 +791,10 @@ export function createFlow(definitionOrConfig, options = {}) {
   }
 
   for (const [name, resource] of Object.entries(resources)) {
+    if (refs[name] === resource) {
+      continue;
+    }
+
     refStops.push(resource.subscribe(() => recordChange(name, store[name])));
   }
 
@@ -1091,12 +1155,8 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
 
         const entry = refs[prop] ?? resources[prop];
 
-        if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED]) {
+        if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED] || entry?.[RESOURCE]) {
           return entry.get();
-        }
-
-        if (entry?.[RESOURCE]) {
-          return entry?.[RESOURCE_IMMEDIATE] ? entry.value : entry;
         }
 
         return plainValues[prop];
@@ -1114,17 +1174,13 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
           return true;
         }
 
-        if (entry?.[SIGNAL]) {
+        if (entry?.[SIGNAL] || entry?.[RESOURCE]) {
           entry.set(value);
           return true;
         }
 
         if (entry?.[COMPUTED]) {
           throw new Error("Computed store values are read-only.");
-        }
-
-        if (entry?.[RESOURCE]) {
-          throw new Error("Resource store values are controlled through resource methods.");
         }
 
         if (!Object.hasOwn(plainValues, prop)) {
@@ -1295,6 +1351,34 @@ function isResourceLike(value) {
   return Boolean(value && typeof value === "object" && value[RESOURCE]);
 }
 
+function normalizeCreateComputedArgs(optionsOrCompute, maybeCompute, maybeRuntimeOptions) {
+  if (typeof optionsOrCompute === "function") {
+    return {
+      options: {},
+      compute: optionsOrCompute,
+      runtimeOptions: isPlainObject(maybeCompute) ? maybeCompute : {}
+    };
+  }
+
+  if (!isPlainObject(optionsOrCompute)) {
+    throw new TypeError("createComputed(...) options must be an object when provided.");
+  }
+
+  if (Object.hasOwn(optionsOrCompute, "arguments")) {
+    assertValidConfiguredArguments("createComputed", optionsOrCompute.arguments);
+  }
+
+  if (typeof maybeCompute !== "function") {
+    throw new TypeError("createComputed(...) requires a compute function.");
+  }
+
+  return {
+    options: { ...optionsOrCompute },
+    compute: maybeCompute,
+    runtimeOptions: isPlainObject(maybeRuntimeOptions) ? maybeRuntimeOptions : {}
+  };
+}
+
 function normalizeCreateResourceArgs(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
   if (isResourceDefinition(optionsOrLoader)) {
     return {
@@ -1313,11 +1397,15 @@ function normalizeCreateResourceArgs(optionsOrLoader, maybeLoader, maybeRuntimeO
   }
 
   if (!isPlainObject(optionsOrLoader)) {
-    throw new TypeError("createResource(...) options must be an object when provided.");
+    throw new TypeError("createAsyncSignal(...) options must be an object when provided.");
+  }
+
+  if (Object.hasOwn(optionsOrLoader, "arguments")) {
+    assertValidConfiguredArguments("createAsyncSignal", optionsOrLoader.arguments);
   }
 
   if (typeof maybeLoader !== "function") {
-    throw new TypeError("createResource(...) requires a loader function.");
+    throw new TypeError("createAsyncSignal(...) requires a loader function.");
   }
 
   return {
@@ -1327,6 +1415,60 @@ function normalizeCreateResourceArgs(optionsOrLoader, maybeLoader, maybeRuntimeO
     },
     loader: maybeLoader,
     runtimeOptions: isPlainObject(maybeRuntimeOptions) ? maybeRuntimeOptions : {}
+  };
+}
+
+function resolveConfiguredArguments(name, configured, store, explicitArgs = []) {
+  if (explicitArgs.length > 0) {
+    return [...explicitArgs];
+  }
+
+  if (configured === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(configured)) {
+    return [...configured];
+  }
+
+  if (typeof configured === "function") {
+    const resolved = configured(store);
+    if (!Array.isArray(resolved)) {
+      throw new TypeError(`${name}(...) options.arguments function must return an array.`);
+    }
+
+    return [...resolved];
+  }
+
+  throw new TypeError(`${name}(...) options.arguments must be an array or function when provided.`);
+}
+
+function assertValidConfiguredArguments(name, value) {
+  if (Array.isArray(value) || typeof value === "function") {
+    return;
+  }
+
+  throw new TypeError(`${name}(...) options.arguments must be an array or function when provided.`);
+}
+
+function createComputedReceiver(options) {
+  return {
+    ...options.context,
+    store: options.store,
+    refs: options.refs,
+    name: options.name
+  };
+}
+
+function createAsyncSignalReceiver(options) {
+  return {
+    store: options.store,
+    refs: options.refs,
+    resources: options.resources,
+    name: options.name,
+    signal: options.signal,
+    version: options.version,
+    args: [...options.args]
   };
 }
 

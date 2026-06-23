@@ -2,7 +2,6 @@ export {
   defineAsyncSignal,
   defineAsyncSignal as asyncSignal,
   defineResource,
-  defineResource as resource,
   isAsyncSignal,
   isAsyncSignalDefinition,
   isImmediateResource,

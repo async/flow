@@ -2,6 +2,7 @@ export const FLOW_DEFINITION = "async.flow.definition";
 export const SIGNAL_DEFINITION = "async.flow.signal";
 export const COMPUTED_DEFINITION = "async.flow.computed";
 export const STATUS_DEFINITION = "async.flow.status";
+export const ASYNC_SIGNAL_DEFINITION = "async.flow.asyncSignal";
 export const RESOURCE_DEFINITION = "async.flow.resource";
 
 export const SIGNAL = Symbol.for("@async/flow.signal");
@@ -33,22 +34,25 @@ export function defineStatus(initial, allowed) {
   };
 }
 
-export function defineComputed(compute) {
+export function defineComputed(optionsOrCompute, maybeCompute) {
+  const { options, compute } = normalizeCallbackArgs("computed", optionsOrCompute, maybeCompute);
+
   if (typeof compute !== "function") {
     throw new TypeError("computed(...) requires a function.");
   }
 
   return {
     kind: COMPUTED_DEFINITION,
+    options,
     compute
   };
 }
 
-export function defineResource(optionsOrLoader, maybeLoader) {
-  const { options, loader } = normalizeResourceArgs(optionsOrLoader, maybeLoader);
+export function defineAsyncSignal(optionsOrLoader, maybeLoader) {
+  const { options, loader } = normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader);
   const definition = {
     [RESOURCE]: true,
-    kind: RESOURCE_DEFINITION,
+    kind: ASYNC_SIGNAL_DEFINITION,
     options,
     loader
   };
@@ -63,6 +67,8 @@ export function defineResource(optionsOrLoader, maybeLoader) {
 
   return definition;
 }
+
+export const defineResource = defineAsyncSignal;
 
 export function defineFlow(config = {}) {
   if (isFlowDefinition(config)) {
@@ -123,8 +129,20 @@ export function isComputedDefinition(value) {
   return isPlainObject(value) && value.kind === COMPUTED_DEFINITION;
 }
 
+export function isAsyncSignalDefinition(value) {
+  return Boolean(isPlainObject(value) && value.kind === ASYNC_SIGNAL_DEFINITION && value[RESOURCE]);
+}
+
 export function isResourceDefinition(value) {
-  return Boolean(isPlainObject(value) && value.kind === RESOURCE_DEFINITION && value[RESOURCE]);
+  return Boolean(
+    isPlainObject(value)
+      && value[RESOURCE]
+      && (value.kind === RESOURCE_DEFINITION || value.kind === ASYNC_SIGNAL_DEFINITION)
+  );
+}
+
+export function isAsyncSignal(value) {
+  return Boolean(value?.[RESOURCE]);
 }
 
 export function isResource(value) {
@@ -148,29 +166,51 @@ export const flow = defineFlow;
 export const signal = defineSignal;
 export const computed = defineComputed;
 export const status = defineStatus;
-export const resource = defineResource;
+export const asyncSignal = defineAsyncSignal;
+export const resource = defineAsyncSignal;
 
-function normalizeResourceArgs(optionsOrLoader, maybeLoader) {
-  if (typeof optionsOrLoader === "function" && maybeLoader === undefined) {
-    return {
-      options: { immediate: false },
-      loader: optionsOrLoader
-    };
-  }
-
-  if (!isPlainObject(optionsOrLoader)) {
-    throw new TypeError("resource(...) options must be an object when provided.");
-  }
-
-  if (typeof maybeLoader !== "function") {
-    throw new TypeError("resource(...) requires a loader function.");
-  }
+function normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader) {
+  const { options, compute: loader } = normalizeCallbackArgs("asyncSignal", optionsOrLoader, maybeLoader);
 
   return {
     options: {
-      ...optionsOrLoader,
-      immediate: optionsOrLoader.immediate === true
+      ...options,
+      immediate: options.immediate === true
     },
-    loader: maybeLoader
+    loader
   };
+}
+
+function normalizeCallbackArgs(name, optionsOrFn, maybeFn) {
+  if (typeof optionsOrFn === "function" && maybeFn === undefined) {
+    return {
+      options: {},
+      compute: optionsOrFn
+    };
+  }
+
+  if (!isPlainObject(optionsOrFn)) {
+    throw new TypeError(`${name}(...) options must be an object when provided.`);
+  }
+
+  if (Object.hasOwn(optionsOrFn, "arguments")) {
+    assertValidConfiguredArguments(name, optionsOrFn.arguments);
+  }
+
+  if (typeof maybeFn !== "function") {
+    throw new TypeError(`${name}(...) requires a function.`);
+  }
+
+  return {
+    options: { ...optionsOrFn },
+    compute: maybeFn
+  };
+}
+
+function assertValidConfiguredArguments(name, value) {
+  if (Array.isArray(value) || typeof value === "function") {
+    return;
+  }
+
+  throw new TypeError(`${name}(...) options.arguments must be an array or function when provided.`);
 }

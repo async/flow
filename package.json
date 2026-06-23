@@ -37,6 +37,11 @@
       "import": "./src/resource.js",
       "default": "./src/resource.js"
     },
+    "./async-signal": {
+      "types": "./src/async-signal.d.ts",
+      "import": "./src/async-signal.js",
+      "default": "./src/async-signal.js"
+    },
     "./compose": {
       "types": "./src/compose.d.ts",
       "import": "./src/compose.js",
@@ -46,6 +51,11 @@
       "types": "./src/helpers.d.ts",
       "import": "./src/helpers.js",
       "default": "./src/helpers.js"
+    },
+    "./steps": {
+      "types": "./src/steps.d.ts",
+      "import": "./src/steps.js",
+      "default": "./src/steps.js"
     },
     "./scheduler": {
       "types": "./src/scheduler.d.ts",

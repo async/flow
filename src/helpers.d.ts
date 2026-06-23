@@ -7,15 +7,37 @@ export type FlowMetadataOptions = {
   reason?: string;
   label?: string;
 };
-export function set(name: string, value: unknown): FlowHandler;
-export function set(updates: Record<string, unknown>): FlowHandler;
+export type FlowStepResolver = (
+  store: Record<string, unknown>,
+  input: unknown,
+  previous: unknown
+) => unknown;
+export type FlowStepValue = unknown | FlowStepResolver;
+export type FlowPredicate = (
+  store: Record<string, unknown>,
+  input: unknown,
+  previous: unknown
+) => boolean;
+export type FlowBranchCase =
+  | readonly [FlowPredicate, FlowHandler]
+  | {
+      when?: FlowPredicate;
+      then: FlowHandler;
+      default?: boolean;
+    }
+  | FlowHandler;
+export function set(name: string, value: FlowStepValue): FlowHandler;
+export function set(updates: Record<string, FlowStepValue>): FlowHandler;
+export function dispatch(eventName: string, input?: FlowStepValue): FlowHandler;
+export function after(ms: number, eventName: string, input?: FlowStepValue): FlowHandler;
 export function update(
   name: string,
   fn: (current: unknown, store: Record<string, unknown>, input: unknown, previous: unknown) => unknown
 ): FlowHandler;
 export function when(
-  predicate: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean
+  predicate: FlowPredicate
 ): FlowHandler;
+export function branch(cases: readonly FlowBranchCase[]): FlowHandler;
 export function onError(
   handle: (error: unknown, store: Record<string, unknown>, input: unknown, previous: unknown) => unknown,
   handler: FlowHandler
