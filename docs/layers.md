@@ -13,9 +13,9 @@ tests, and small state units that do not need named events yet.
 
 ### Signals And Computed Values
 
-Signals are writable refs with `get`, `set`, `update`, `subscribe`, and
-`snapshot`. Writable refs also expose `restore`. Computed values are read-only
-refs derived from signals or other store values.
+Signals are writable values with `get`, `set`, `update`, `subscribe`, and
+`snapshot`. Writable values also expose `restore`. Computed values are
+read-only values derived from signals or other store values.
 
 ```js
 import { createComputed, createSignal } from "@async/flow";
@@ -48,7 +48,8 @@ greeting.value; // "Hello Ada"
 ### Store Proxy
 
 Stores wrap signals, computed values, async signals, and plain writable values
-in one author-facing proxy while keeping raw refs available for adapters.
+in one author-facing proxy while keeping intentionally internal async signal
+controllers available.
 
 ```js
 import { asyncSignal, computed, createStore, signal } from "@async/flow";
@@ -57,24 +58,28 @@ const state = createStore({
   count: 0,
   settings: signal({ currency: "USD" }),
   doubled: computed(function () {
-    return this.store.count * 2;
+    return this.count * 2;
   }),
-  greeting: asyncSignal({ arguments: (store) => [store.settings.currency] }, async (currency) => {
+  _greeting: asyncSignal(async function () {
+    const currency = this.store.settings.currency;
     return `Hello ${currency}`;
-  })
+  }),
+  get greeting() {
+    return this._greeting.get();
+  }
 });
 
 state.store.count += 1;
 state.store.doubled; // 2
-state.refs.count.get(); // 1
-await state.refs.greeting.load();
+state.store.count; // 1
+await state.store._greeting.load();
 state.store.greeting; // "Hello USD"
 ```
 
 Choose L1 when:
 
 - You are integrating Flow state into another runtime or framework.
-- You need direct refs or async signal controllers.
+- You need async signal controllers.
 - There is no useful event vocabulary yet.
 - Tests or adapters need small state units without a full Flow instance.
 
@@ -113,8 +118,8 @@ Choose L2 when:
 - State changes should be named actions such as `increment`, `fetch`, or
   `submit`.
 - Subscribers should see batched handler changes.
-- Handlers need `this.dispatch(...)`, `this.after(...)`, `this.refs`, or
-  injected runtime context.
+- Handlers need `this.dispatch(...)`, `this.after(...)`, internal controllers,
+  or injected runtime context.
 - UI controls or adapters need `can(...)`, `explain(...)`, or `describe()`
   without dispatching events.
 

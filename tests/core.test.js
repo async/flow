@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   computed,
   defineFlow,
+  FLOW_INSTANCE,
   flow,
   guard,
   asyncSignal,
@@ -64,9 +65,11 @@ test("createStore normalizes values and exposes refs behind a store proxy", () =
     items: [],
     selectedId: signal(null),
     count: computed(function () {
-      return this.store.items.length;
+      return this.items.length;
     }),
-    isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0),
+    isEmpty: computed(function () {
+      return this.count === 0;
+    }),
     phase: status("idle", ["idle", "ready"])
   });
 
@@ -84,15 +87,98 @@ test("createStore normalizes values and exposes refs behind a store proxy", () =
   }, /read-only/);
 });
 
+test("computed callbacks read store values from this and keep this.store compatibility", () => {
+  const counter = createStore({
+    count: 1,
+    doubled: computed(function () {
+      return this.count * 2;
+    }),
+    legacyDoubled: computed(function () {
+      return this.store.count * 2;
+    })
+  });
+
+  assert.equal(counter.store.doubled, 2);
+  assert.equal(counter.store.legacyDoubled, 2);
+
+  counter.store.count = 3;
+
+  assert.equal(counter.store.doubled, 6);
+  assert.equal(counter.store.legacyDoubled, 6);
+});
+
+test("flow projects public store values and hides internal controllers", async () => {
+  const greeting = flow({
+    store: {
+      name: "World",
+      _request: asyncSignal(async function () {
+        return `Hello ${this.store.name}`;
+      }),
+      get status() {
+        return this._request.status;
+      },
+      get value() {
+        return this._request.get();
+      },
+      subscribe: "store-level"
+    },
+    on: {
+      fetch() {
+        return this.store._request.load();
+      },
+      reload() {
+        return this.store._request.reload();
+      },
+      cancel(_store, reason) {
+        return this.store._request.cancel(reason);
+      }
+    }
+  });
+  const statuses = [];
+  const values = [];
+
+  assert.equal(greeting[FLOW_INSTANCE], true);
+  assert.equal(greeting[Symbol.for("@async/flow.instance")], true);
+  assert.equal(greeting.name, "World");
+  greeting.name = "Ada";
+  assert.equal(greeting.store.name, "Ada");
+  assert.equal(greeting.store.subscribe, "store-level");
+  assert.equal(typeof greeting.subscribe, "function");
+  assert.equal(Object.hasOwn(greeting, "_request"), false);
+  assert.equal(greeting._._request, greeting.store._request);
+  assert.equal(greeting.store._request.kind, "asyncSignal");
+  assert.equal(greeting.status, "idle");
+  assert.equal(greeting.value, undefined);
+
+  const stopStatus = greeting.subscribe("status", (value) => statuses.push(value));
+  const stopValue = greeting.subscribe("value", (value) => values.push(value));
+
+  const loaded = greeting.fetch();
+  assert.equal(greeting.status, "loading");
+  assert.deepEqual(statuses, ["loading"]);
+  assert.equal(await loaded, "Hello Ada");
+  assert.equal(greeting.status, "ready");
+  assert.equal(greeting.value, "Hello Ada");
+  assert.deepEqual(statuses, ["loading", "ready"]);
+  assert.deepEqual(values, ["Hello Ada"]);
+  assert.equal(await greeting.reload(), "Hello Ada");
+  assert.equal(greeting.cancel("stop"), "ready");
+
+  stopStatus();
+  stopValue();
+});
+
 test("flow creates store and separate refs", () => {
   const cart = flow({
     store: {
       items: [],
       selectedId: signal(null),
       count: computed(function () {
-        return this.store.items.length;
+        return this.items.length;
       }),
-      isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0)
+      isEmpty: computed(function () {
+        return this.count === 0;
+      })
     },
     on: {
       add(store, input) {
@@ -180,7 +266,7 @@ test("handler arrays are invalid and returned objects update writable store valu
     store: {
       count: 0,
       doubled: computed(function () {
-        return this.store.count * 2;
+        return this.count * 2;
       })
     },
     on: {
@@ -231,7 +317,7 @@ test("restore updates writable refs and recomputes computed refs", () => {
     store: {
       items: [],
       count: computed(function () {
-        return this.store.items.length;
+        return this.items.length;
       })
     }
   });
@@ -251,7 +337,9 @@ test("flow describe returns fresh public store async signal handler transition a
       step: status("shipping", ["shipping", "payment", "review"]),
       settings: signal({ currency: "USD" }),
       count: 0,
-      doubled: computed({ arguments: (store) => [store.count] }, (count) => count * 2),
+      doubled: computed(function () {
+        return this.count * 2;
+      }),
       user: asyncSignal(async () => ({ id: "user_123" }))
     },
     on: {
@@ -390,6 +478,7 @@ test("root entrypoint exposes the opinionated public surface", async () => {
     "after",
     "asyncSignal",
     "branch",
+    "bool",
     "can",
     "compose",
     "computed",
@@ -405,14 +494,17 @@ test("root entrypoint exposes the opinionated public surface", async () => {
     "defineSignal",
     "defineStatus",
     "dispatch",
+    "every",
     "flow",
     "guard",
     "matches",
+    "not",
     "onError",
     "parallel",
     "remember",
     "set",
     "signal",
+    "some",
     "status",
     "transition",
     "update",
@@ -421,6 +513,15 @@ test("root entrypoint exposes the opinionated public surface", async () => {
 
   for (const name of names) {
     assert.equal(typeof root[name], "function", `${name} should be exported from root`);
+  }
+  assert.equal(typeof root.FLOW_INSTANCE, "symbol");
+});
+
+test("helpers subpath exposes boolean condition helpers", async () => {
+  const helpers = await import("@async/flow/helpers");
+
+  for (const name of ["bool", "every", "some", "not"]) {
+    assert.equal(typeof helpers[name], "function", `${name} should be exported from helpers`);
   }
 });
 

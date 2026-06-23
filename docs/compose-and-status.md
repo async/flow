@@ -5,13 +5,18 @@
 ```js
 import {
   after,
+  bool,
   branch,
   compose,
   dispatch,
+  every,
   flow,
+  matches,
+  not,
   parallel,
   remember,
   set,
+  some,
   status,
   transition,
   when
@@ -71,12 +76,12 @@ step(store, input, previous);
 returned by an earlier step.
 
 `compose` preserves the receiver for every step, so method-style helpers can use
-`this.dispatch(...)`, `this.refs`, and other Flow receiver capabilities.
+`this.dispatch(...)`, `this.store._user`, and other Flow receiver capabilities.
 
 ```js
 const handler = compose([
   function load(store) {
-    return this.refs.user.load(store.userId);
+    return this.store._user.load(store.userId);
   },
   function cache(store, _input, user) {
     store.currentUser = user;
@@ -152,7 +157,8 @@ after(5000, "checkJobStatus", (store) => ({ id: store.jobId }));
 ```
 
 `branch(cases)` runs the first matching case. Tuple cases are
-`[predicate, handler]`; a bare handler is the default case.
+`[condition, handler]`; a bare handler is the default case. Conditions may be
+predicate functions or computed boolean helpers.
 
 ```js
 branch([
@@ -186,16 +192,16 @@ composed handler, waits for every async branch, and returns `undefined`.
 
 ```js
 compose([
-  set({ refreshing: true, error: null }),
+  set({ syncing: true, error: null }),
   parallel({
     user() {
-      return this.refs.user.reload();
+      return this.store._user.reload();
     },
     cart() {
-      return this.refs.cart.reload();
+      return this.store._cart.reload();
     }
   }),
-  set("refreshing", false)
+  set("syncing", false)
 ]);
 ```
 
@@ -238,8 +244,11 @@ hidden history, rollback, or transaction behavior.
 const order = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
+    canSubmit: true,
     canGoNext: can("step", "next"),
-    inReview: matches("step", "review")
+    inReview: matches("step", "review"),
+    readyToSubmit: every(matches("step", "review"), (store) => store.canSubmit),
+    submitBlocked: not((store) => store.readyToSubmit)
   },
 
   on: {
@@ -249,7 +258,7 @@ const order = flow({
     }),
 
     submit: guard(
-      (store) => store.step === "review",
+      (store) => store.readyToSubmit,
       set("submitted", true)
     )
   }
@@ -257,7 +266,16 @@ const order = flow({
 ```
 
 `transition(statusName, rules)` writes the next status when a rule matches.
-Missing matches are no-ops.
+Missing matches are no-ops. Rule `when` fields accept the same boolean
+conditions as `guard(...)` and `when(...)`.
+
+```js
+transition("step", {
+  from: "review",
+  to: "submitted",
+  when: every(matches("step", "review"), (store) => store.canSubmit)
+});
+```
 
 `can(statusName, eventName)` computes whether a transition handler can move
 from the current status.
@@ -281,7 +299,47 @@ const checkout = flow({
 ```
 
 `matches(statusName, value)` computes whether the current status matches a
-value.
+value. The value may also be an array.
+
+```js
+const dragging = matches("phase", ["dragging", "overTarget"]);
+```
+
+`bool(condition)` coerces one condition to a computed boolean. `every(...)`,
+`some(...)`, and `not(...)` compose boolean conditions without inline `&&`,
+`||`, or `!`.
+
+```js
+const cardDrag = flow({
+  store: {
+    phase: status("idle", ["idle", "dragging", "overTarget"]),
+    cardId: null,
+    overColumnId: null,
+    dragging: matches("phase", ["dragging", "overTarget"]),
+    dropReady: every(
+      matches("phase", "overTarget"),
+      (store) => store.cardId,
+      (store) => store.overColumnId
+    ),
+    blocked: not(can("drop"))
+  },
+
+  on: {
+    drop: guard(
+      every(
+        matches("phase", "overTarget"),
+        (store) => store.cardId,
+        (store) => store.overColumnId
+      ),
+      set("dropped", true)
+    )
+  }
+});
+```
+
+Conditions can be predicate functions, computed definitions from helpers such
+as `matches(...)` or `can(...)`, or boolean helpers. Predicate conditions
+receive `(store, input, previous)`, matching composed handler steps.
 
 `guard(predicate, handler)` skips the handler when the predicate is false.
 
@@ -332,7 +390,7 @@ guard(
 ```
 
 `flow.describe()` and receiver `this.describe()` return public inspection data
-for store entries, resources, handlers, transitions, and guards.
+for store entries, handlers, transitions, and guards.
 
 ```js
 const description = checkout.describe();
@@ -345,11 +403,8 @@ description.transitions.next.status; // "step"
 Descriptions are fresh snapshots for inspection. They do not expose raw handler
 functions, guard predicates, or transition condition functions.
 
-Live status refs carry the exported `STATUS` symbol, backed by
-`Symbol.for("@async/flow.status")`.
-
 Transition and guard metadata use public symbols:
 
 ```js
-import { GUARD, STATUS, TRANSITION } from "@async/flow";
+import { GUARD, TRANSITION } from "@async/flow";
 ```

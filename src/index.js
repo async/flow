@@ -29,7 +29,8 @@ export {
   createStatus,
   createComputed,
   createAsyncSignal,
-  createResource
+  createResource,
+  FLOW_INSTANCE
 } from "./runtime.js";
 export {
   compose,
@@ -42,6 +43,10 @@ export {
   update,
   dispatch,
   after,
+  bool,
+  every,
+  some,
+  not,
   when,
   branch,
   onError,

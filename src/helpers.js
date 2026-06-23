@@ -1,4 +1,4 @@
-import { defineComputed, defineStatus, isPlainObject } from "./define.js";
+import { defineComputed, defineStatus, isComputedDefinition, isPlainObject } from "./define.js";
 import { createComposeStop, isPromiseLike } from "./compose.js";
 
 export const TRANSITION = Symbol.for("@async/flow.transition");
@@ -58,13 +58,47 @@ export function update(name, fn) {
   };
 }
 
+export function bool(condition) {
+  assertCondition(condition, "bool");
+
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    return Boolean(resolveCondition(condition, this, store, undefined, undefined, "bool"));
+  });
+}
+
+export function every(...conditions) {
+  assertConditionList(conditions, "every");
+
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    return conditions.every((condition) =>
+      Boolean(resolveCondition(condition, this, store, undefined, undefined, "every"))
+    );
+  });
+}
+
+export function some(...conditions) {
+  assertConditionList(conditions, "some");
+
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    return conditions.some((condition) =>
+      Boolean(resolveCondition(condition, this, store, undefined, undefined, "some"))
+    );
+  });
+}
+
+export function not(condition) {
+  assertCondition(condition, "not");
+
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    return !Boolean(resolveCondition(condition, this, store, undefined, undefined, "not"));
+  });
+}
+
 export function when(predicate) {
-  if (typeof predicate !== "function") {
-    throw new TypeError("when(...) requires a predicate function.");
-  }
+  const condition = createConditionPredicate(predicate, "when");
 
   return function whenStep(store, input, previous) {
-    return predicate(store, input, previous) ? undefined : createComposeStop();
+    return condition.call(this, store, input, previous) ? undefined : createComposeStop();
   };
 }
 
@@ -73,7 +107,7 @@ export function branch(cases) {
 
   return function branchStep(store, input, previous) {
     for (const entry of normalized) {
-      if (entry.default || entry.when.call(this, store, input, previous)) {
+      if (entry.default || entry.condition.call(this, store, input, previous)) {
         return entry.then.call(this, store, input, previous);
       }
     }
@@ -112,18 +146,15 @@ export function onError(handle, handler) {
 }
 
 export function guard(predicate, handler, options) {
-  if (typeof predicate !== "function") {
-    throw new TypeError("guard(...) requires a predicate function.");
-  }
-
   if (typeof handler !== "function") {
     throw new TypeError("guard(...) requires a handler function.");
   }
 
+  const condition = createConditionPredicate(predicate, "guard");
   const metadata = normalizeMetadataOptions(options, "guard");
 
   const guardStep = function guardStep(store, input, previous) {
-    if (!predicate.call(this, store, input, previous)) {
+    if (!condition.call(this, store, input, previous)) {
       return undefined;
     }
 
@@ -134,7 +165,7 @@ export function guard(predicate, handler, options) {
   Object.defineProperty(guardStep, GUARD, {
     configurable: true,
     value: {
-      predicate,
+      predicate: condition,
       ...metadata
     }
   });
@@ -148,7 +179,7 @@ export function transition(statusName, config) {
   const transitionStep = function transitionStep(store, input, previous) {
     const name = resolveStatusName(this, statusName);
     const current = store[name];
-    const rule = rules.find((entry) => transitionRuleMatches(entry, current, store, input, previous));
+    const rule = rules.find((entry) => transitionRuleMatches(entry, current, this, store, input, previous));
 
     if (!rule) {
       return undefined;
@@ -174,8 +205,8 @@ export function transition(statusName, config) {
 export function can(statusNameOrEventName, eventName) {
   if (arguments.length === 1) {
     assertEventName(statusNameOrEventName, "can");
-    return defineComputed(function () {
-      return Boolean(this.explain?.(statusNameOrEventName, undefined, this.store)?.allowed);
+    return defineComputed({ arguments: (store) => [store] }, function (store) {
+      return Boolean(this.explain?.(statusNameOrEventName, undefined, store)?.allowed);
     });
   }
 
@@ -184,8 +215,8 @@ export function can(statusNameOrEventName, eventName) {
     throw new TypeError("can(...) requires an event name.");
   }
 
-  return defineComputed(function () {
-    const explanation = this.explain?.(eventName, undefined, this.store, {
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    const explanation = this.explain?.(eventName, undefined, store, {
       statusName: statusNameOrEventName
     });
 
@@ -195,9 +226,78 @@ export function can(statusNameOrEventName, eventName) {
 
 export function matches(statusName, value) {
   assertStatusName(statusName, "matches");
-  return defineComputed(function () {
-    return Object.is(this.store[resolveStatusName(this, statusName)], value);
+  return defineComputed({ arguments: (store) => [store] }, function (store) {
+    const current = store[resolveStatusName(this, statusName)];
+    return Array.isArray(value)
+      ? value.some((entry) => Object.is(current, entry))
+      : Object.is(current, value);
   });
+}
+
+function createConditionPredicate(condition, helperName) {
+  assertCondition(condition, helperName);
+
+  return function conditionPredicate(store, input, previous) {
+    return Boolean(resolveCondition(condition, this, store, input, previous, helperName));
+  };
+}
+
+function resolveCondition(condition, receiver, store, input, previous, helperName) {
+  if (typeof condition === "function") {
+    return condition.call(receiver, store, input, previous);
+  }
+
+  if (isComputedDefinition(condition)) {
+    const args = resolveConditionArguments(condition.options?.arguments, store, helperName);
+    const conditionReceiver = createConditionReceiver(receiver);
+    return condition.compute.apply(conditionReceiver, args);
+  }
+
+  throw new TypeError(`${helperName}(...) requires a boolean condition.`);
+}
+
+function createConditionReceiver(receiver) {
+  const conditionReceiver = Object.create(receiver ?? null);
+  return conditionReceiver;
+}
+
+function resolveConditionArguments(configured, store, helperName) {
+  if (configured === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(configured)) {
+    return [...configured];
+  }
+
+  if (typeof configured === "function") {
+    const resolved = configured(store);
+    if (!Array.isArray(resolved)) {
+      throw new TypeError(`${helperName}(...) condition options.arguments function must return an array.`);
+    }
+
+    return [...resolved];
+  }
+
+  throw new TypeError(`${helperName}(...) condition options.arguments must be an array or function when provided.`);
+}
+
+function assertConditionList(conditions, helperName) {
+  if (conditions.length === 0) {
+    throw new TypeError(`${helperName}(...) requires at least one boolean condition.`);
+  }
+
+  for (const condition of conditions) {
+    assertCondition(condition, helperName);
+  }
+}
+
+function assertCondition(condition, helperName) {
+  if (typeof condition === "function" || isComputedDefinition(condition)) {
+    return;
+  }
+
+  throw new TypeError(`${helperName}(...) requires a boolean condition.`);
 }
 
 function assertStatusName(value, helperName) {
@@ -263,15 +363,15 @@ function normalizeBranchCases(cases) {
 function normalizeBranchCase(entry, index) {
   if (Array.isArray(entry)) {
     if (entry.length !== 2) {
-      throw new TypeError("branch(...) tuple cases must be [predicate, handler].");
+      throw new TypeError("branch(...) tuple cases must be [condition, handler].");
     }
 
     const [whenFn, thenFn] = entry;
-    assertBranchPredicate(whenFn);
+    assertBranchCondition(whenFn);
     assertBranchHandler(thenFn);
     return {
       default: false,
-      when: whenFn,
+      condition: createConditionPredicate(whenFn, "branch"),
       then: thenFn
     };
   }
@@ -279,7 +379,6 @@ function normalizeBranchCase(entry, index) {
   if (typeof entry === "function") {
     return {
       default: true,
-      when: undefined,
       then: entry
     };
   }
@@ -290,13 +389,13 @@ function normalizeBranchCase(entry, index) {
     const thenFn = entry.then;
 
     if (!isDefault) {
-      assertBranchPredicate(whenFn);
+      assertBranchCondition(whenFn);
     }
 
     assertBranchHandler(thenFn);
     return {
       default: isDefault,
-      when: whenFn,
+      condition: isDefault ? undefined : createConditionPredicate(whenFn, "branch"),
       then: thenFn
     };
   }
@@ -304,9 +403,11 @@ function normalizeBranchCase(entry, index) {
   throw new TypeError(`branch(...) case ${index + 1} must be a tuple, object, or default handler.`);
 }
 
-function assertBranchPredicate(value) {
-  if (typeof value !== "function") {
-    throw new TypeError("branch(...) cases require predicate functions.");
+function assertBranchCondition(value) {
+  try {
+    assertCondition(value, "branch");
+  } catch {
+    throw new TypeError("branch(...) cases require boolean conditions.");
   }
 }
 
@@ -340,8 +441,12 @@ function normalizeTransitionRule(rule) {
     throw new TypeError('transition(...) rules require a "to" value.');
   }
 
-  if (Object.hasOwn(rule, "when") && typeof rule.when !== "function") {
-    throw new TypeError('transition(...) rule "when" must be a function.');
+  if (Object.hasOwn(rule, "when")) {
+    try {
+      assertCondition(rule.when, "transition");
+    } catch {
+      throw new TypeError('transition(...) rule "when" must be a boolean condition.');
+    }
   }
 
   const metadata = normalizeMetadataOptions(rule, "transition");
@@ -349,17 +454,17 @@ function normalizeTransitionRule(rule) {
   return {
     from: rule.from,
     to: rule.to,
-    when: rule.when,
+    when: Object.hasOwn(rule, "when") ? createConditionPredicate(rule.when, "transition") : undefined,
     ...metadata
   };
 }
 
-function transitionRuleMatches(rule, current, store, input, previous) {
+function transitionRuleMatches(rule, current, receiver, store, input, previous) {
   if (rule.from !== undefined && !matchesFrom(rule.from, current)) {
     return false;
   }
 
-  return typeof rule.when !== "function" || Boolean(rule.when(store, input, previous));
+  return typeof rule.when !== "function" || Boolean(rule.when.call(receiver, store, input, previous));
 }
 
 function matchesFrom(from, current) {

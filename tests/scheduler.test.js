@@ -146,7 +146,7 @@ test("createFlow passes the scheduler to owned primitives and batches handlers",
       store: {
         items: [],
         count: computed(function () {
-          return this.store.items.length;
+          return this.items.length;
         })
       },
       on: {

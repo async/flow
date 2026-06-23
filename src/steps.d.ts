@@ -8,6 +8,8 @@ export {
   when
 } from "./helpers.js";
 export type {
+  FlowBooleanCondition,
+  FlowBooleanPredicate,
   FlowBranchCase,
   FlowPredicate,
   FlowStepResolver,

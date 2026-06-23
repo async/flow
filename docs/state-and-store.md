@@ -1,13 +1,13 @@
 # Signals, Computed, Async Signals, And Store
 
 Flow state starts with small reactive units. A store combines those units behind
-an author-facing object while keeping raw refs and async signal controllers
-available for adapters.
+an author-facing object while keeping async signal controllers available when a
+field is intentionally internal.
 
 ## Signals
 
-Signals are writable refs. Use `signal(value)` in a Flow store declaration, or
-`createSignal(value)` when you need a live ref directly.
+Signals are writable values. Use `signal(value)` in a Flow store declaration,
+or `createSignal(value)` when you need a live signal directly.
 
 ```js
 import { createSignal } from "@async/flow";
@@ -33,9 +33,9 @@ signal.restore(snapshot);
 
 ## Computed Values
 
-Computed values are read-only derived refs. Use function expressions when a
-computed callback should read from the store receiver, or options-first
-arguments when positional user data is clearer.
+Computed values are read-only derived values. In function expressions, `this` is
+the store receiver, so use direct reads such as `this.count`. Options-first
+arguments remain available when positional user data is clearer.
 
 ```js
 import { computed, createStore } from "@async/flow";
@@ -43,9 +43,11 @@ import { computed, createStore } from "@async/flow";
 const cart = createStore({
   items: [],
   count: computed(function () {
-    return this.store.items.length;
+    return this.items.length;
   }),
-  isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0)
+  isEmpty: computed(function () {
+    return this.count === 0;
+  })
 });
 
 cart.store.items = [{ id: "sku_123" }];
@@ -53,8 +55,8 @@ cart.store.count; // 1
 cart.store.isEmpty; // false
 ```
 
-Computed refs reject writes through the store. Keep writable state in signals,
-status refs, async signals, or plain writable values.
+Computed values reject writes through the store. Keep writable state in signals,
+status values, async signals, or plain writable values.
 
 ## Status Values
 
@@ -62,14 +64,14 @@ status refs, async signals, or plain writable values.
 validation and a public status brand.
 
 ```js
-import { STATUS, createStore, status } from "@async/flow";
+import { createStore, status } from "@async/flow";
 
 const order = createStore({
   step: status("shipping", ["shipping", "payment", "review"])
 });
 
 order.store.step = "payment";
-order.refs.step[STATUS]; // true
+order.store.step; // "payment"
 ```
 
 Use status values when a value is finite and meaningful to workflow helpers.
@@ -99,39 +101,44 @@ greeting.status; // "ready"
 Async signals expose the async lifecycle and the readable signal protocol:
 
 ```js
-asyncRef.get();
-asyncRef.status; // "idle" | "loading" | "ready" | "error"
-asyncRef.load(...args);
-asyncRef.reload(...args);
-asyncRef.cancel(reason);
-asyncRef.set(value);
-asyncRef.update(fn);
-asyncRef.snapshot();
-asyncRef.restore(snapshot);
+asyncController.get();
+asyncController.status; // "idle" | "loading" | "ready" | "error"
+asyncController.load(...args);
+asyncController.reload(...args);
+asyncController.cancel(reason);
+asyncController.set(value);
+asyncController.update(fn);
+asyncController.snapshot();
+asyncController.restore(snapshot);
 ```
 
-Lazy and immediate async signals both read as current values in `store`. Their
-controllers live under `refs`; `resources` is a compatibility view of the same
-controllers.
+Public async signals read as current values in `store`. Async signals starting with `_`
+signals read as controllers so store getters and handlers can expose a flatter
+public shape.
 
 ```js
 import { asyncSignal, createStore } from "@async/flow";
 
 const state = createStore({
-  lazyGreeting: asyncSignal(async () => "hello"),
-  settings: asyncSignal({ immediate: true }, async () => ({ theme: "dark" }))
+  _lazyGreeting: asyncSignal(async () => "hello"),
+  _settings: asyncSignal({ immediate: true }, async () => ({ theme: "dark" })),
+  get lazyGreeting() {
+    return this._lazyGreeting.get();
+  },
+  get settings() {
+    return this._settings.get();
+  }
 });
 
-state.refs.lazyGreeting.load();
+state.store._lazyGreeting.load();
 state.store.lazyGreeting; // current lazy value
 state.store.settings; // current immediate value
-state.refs.settings.reload();
-state.resources.settings === state.refs.settings; // true
+state.store._settings.reload();
 ```
 
 ## Store Proxy
 
-`createStore(shape)` returns `{ store, refs, resources }`.
+`createStore(shape)` returns store values and controller-capable internal fields.
 
 ```js
 import { computed, createStore, signal, status } from "@async/flow";
@@ -140,7 +147,7 @@ const state = createStore({
   name: "World",
   settings: signal({ locale: "en" }),
   greeting: computed(function () {
-    return `Hello ${this.store.name}`;
+    return `Hello ${this.name}`;
   }),
   phase: status("idle", ["idle", "ready"])
 });
@@ -148,20 +155,18 @@ const state = createStore({
 state.store.name = "Ada";
 state.store.greeting; // "Hello Ada"
 
-state.refs.name.get(); // "Ada"
-state.refs.phase.set("ready");
+state.store.phase = "ready";
 state.store.settings = { locale: "fr" };
 ```
 
 The store proxy unwraps known Flow types:
 
-- Signals and status refs read as their values and write through `.set(...)`.
-- Computed refs read as values and reject writes.
-- Async signals read as values and write through `.set(...)`.
-- Async signal controllers are available through `refs`, with `resources` kept
-  as a compatibility view.
+- Signals and status values read as their values and write through `.set(...)`.
+- Computed values read as values and reject writes.
+- Public async signals read as values and write through `.set(...)`.
+- `_` async signals read as controllers and can be exposed through getters.
 - Values that are not Flow types stay normal store values.
 
-Use `store` for author-facing reads and writes. Use `refs` and `resources` when
-an adapter needs explicit subscriptions, snapshots, direct setters, or async
-signal lifecycle methods.
+Use `store` for author-facing reads and writes. Keep lifecycle methods on
+internal `_` fields when an adapter needs subscriptions, snapshots, direct
+setters, or async signal lifecycle methods.

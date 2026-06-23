@@ -17,8 +17,10 @@ import { resolveScheduler } from "./scheduler.js";
 
 const TRANSITION = Symbol.for("@async/flow.transition");
 const GUARD = Symbol.for("@async/flow.guard");
+export const FLOW_INSTANCE = Symbol.for("@async/flow.instance");
 
 const RESERVED_INSTANCE_NAMES = new Set([
+  "_",
   "get",
   "set",
   "update",
@@ -277,22 +279,27 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
     },
 
     get status() {
+      trackDependency(resource);
       return status;
     },
 
     get loading() {
+      trackDependency(resource);
       return status === "loading";
     },
 
     get ready() {
+      trackDependency(resource);
       return status === "ready";
     },
 
     get error() {
+      trackDependency(resource);
       return error;
     },
 
     get version() {
+      trackDependency(resource);
       return version;
     },
 
@@ -488,7 +495,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   }
 
   function notify() {
-      const enqueue = scheduler.enqueue ?? ((fn) => fn());
+    const enqueue = scheduler.enqueue ?? ((fn) => fn());
     enqueue(() => {
       for (const subscriber of [...subscribers]) {
         subscriber(value);
@@ -514,7 +521,20 @@ export function createStore(declarations = {}, options = {}) {
   const context = options.context ?? {};
   let store;
 
-  for (const [name, declaration] of Object.entries(declarations)) {
+  for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(declarations))) {
+    if (isAccessorDescriptor(descriptor)) {
+      if (typeof descriptor.get !== "function" || descriptor.set !== undefined) {
+        throw new TypeError(`Flow store "${name}" accessor declarations must be getter-only.`);
+      }
+
+      computedEntries.push([name, function storeGetterComputed() {
+        return descriptor.get.call(this);
+      }]);
+      continue;
+    }
+
+    const declaration = descriptor.value;
+
     if (isComputedDeclaration(declaration)) {
       computedEntries.push([name, declaration]);
       continue;
@@ -567,10 +587,13 @@ export function createStore(declarations = {}, options = {}) {
       : createComputed(declaration.options ?? {}, compute, { scheduler, store, refs, name, context });
   }
 
+  const internal = createInternalStoreNamespace(refs, resources, plainValues);
+
   return {
     store,
     refs,
     resources,
+    internal,
     writableNames,
     statusNames,
     snapshot() {
@@ -644,8 +667,8 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   }
 
-  const declaredStatusNames = Object.entries(definition.store)
-    .filter(([, declaration]) => isStatusDefinition(declaration))
+  const declaredStatusNames = Object.entries(Object.getOwnPropertyDescriptors(definition.store))
+    .filter(([, descriptor]) => "value" in descriptor && isStatusDefinition(descriptor.value))
     .map(([name]) => name);
 
   const storeState = createStore(definition.store, {
@@ -662,7 +685,7 @@ export function createFlow(definitionOrConfig, options = {}) {
       transition: (eventName) => transitionMetadata.get(eventName)
     }
   });
-  const { store, refs, resources, writableNames, statusNames } = storeState;
+  const { store, refs, resources, internal, writableNames, statusNames } = storeState;
 
   flow = {
     store,
@@ -786,6 +809,20 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   };
 
+  Object.defineProperty(flow, "_", {
+    configurable: false,
+    enumerable: false,
+    value: internal,
+    writable: false
+  });
+
+  Object.defineProperty(flow, FLOW_INSTANCE, {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false
+  });
+
   for (const [name, ref] of Object.entries(refs)) {
     refStops.push(ref.subscribe((value) => recordChange(name, value)));
   }
@@ -802,6 +839,8 @@ export function createFlow(definitionOrConfig, options = {}) {
     registerHandler(name, handler);
   }
 
+  projectStoreValues();
+
   function registerHandler(name, handler) {
     rawHandlers[name] = handler;
     handlers[name] = (input) => flow.dispatch(name, input);
@@ -813,6 +852,29 @@ export function createFlow(definitionOrConfig, options = {}) {
         enumerable: true,
         value(input) {
           return flow.dispatch(name, input);
+        }
+      });
+    }
+  }
+
+  function projectStoreValues() {
+    for (const name of Object.keys(store)) {
+      if (
+        isInternalStoreName(name) ||
+        RESERVED_INSTANCE_NAMES.has(name) ||
+        Object.hasOwn(flow, name)
+      ) {
+        continue;
+      }
+
+      Object.defineProperty(flow, name, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return store[name];
+        },
+        set(value) {
+          flow.set(name, value);
         }
       });
     }
@@ -976,7 +1038,7 @@ export function createFlow(definitionOrConfig, options = {}) {
 
     const readonlyStore = createReadonlyStoreView(storeOverride);
 
-    if (guard && !guard.predicate(readonlyStore, input, undefined)) {
+    if (guard && !guard.predicate.call(createReadonlyFlowReceiver(readonlyStore), readonlyStore, input, undefined)) {
       return {
         event: eventName,
         allowed: false,
@@ -1008,6 +1070,33 @@ export function createFlow(definitionOrConfig, options = {}) {
     };
   }
 
+  function createReadonlyFlowReceiver(readonlyStore) {
+    return {
+      store: readonlyStore,
+      get refs() {
+        return refs;
+      },
+      get resources() {
+        return resources;
+      },
+      can(eventName, nextInput) {
+        return explainEvent(eventName, nextInput, readonlyStore).allowed;
+      },
+      explain(eventName, nextInput, nextStore = readonlyStore, nextOptions = {}) {
+        return explainEvent(eventName, nextInput, nextStore, nextOptions);
+      },
+      describe: describeFlow,
+      _describe() {
+        return flow?._describe?.() ?? {
+          statuses: [...declaredStatusNames],
+          transitions: Object.fromEntries(transitionMetadata),
+          guards: Object.fromEntries(guardMetadata),
+          handlers: Object.keys(definition.on)
+        };
+      }
+    };
+  }
+
   function explainTransition(eventName, transition, input, sourceStore, readonlyStore) {
     const current = sourceStore[transition.status];
     let firstConditionFailure;
@@ -1017,7 +1106,10 @@ export function createFlow(definitionOrConfig, options = {}) {
         continue;
       }
 
-      if (typeof rule.when === "function" && !rule.when(readonlyStore, input, undefined)) {
+      if (
+        typeof rule.when === "function" &&
+        !rule.when.call(createReadonlyFlowReceiver(readonlyStore), readonlyStore, input, undefined)
+      ) {
         firstConditionFailure ??= rule;
         continue;
       }
@@ -1155,6 +1247,10 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
 
         const entry = refs[prop] ?? resources[prop];
 
+        if (entry?.[RESOURCE] && isInternalStoreName(prop)) {
+          return entry;
+        }
+
         if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED] || entry?.[RESOURCE]) {
           return entry.get();
         }
@@ -1209,7 +1305,11 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
           return undefined;
         }
 
-        if (prop in refs || prop in resources || prop in plainValues) {
+        if (
+          Object.hasOwn(refs, prop) ||
+          Object.hasOwn(resources, prop) ||
+          Object.hasOwn(plainValues, prop)
+        ) {
           return {
             configurable: true,
             enumerable: true
@@ -1220,6 +1320,51 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
       }
     }
   );
+}
+
+function createInternalStoreNamespace(refs, resources, plainValues) {
+  const namespace = {};
+  const names = new Set([
+    ...Object.keys(refs),
+    ...Object.keys(resources),
+    ...Object.keys(plainValues)
+  ]);
+
+  for (const name of names) {
+    if (!isInternalStoreName(name)) {
+      continue;
+    }
+
+    if (resources[name]) {
+      Object.defineProperty(namespace, name, {
+        configurable: false,
+        enumerable: true,
+        value: resources[name],
+        writable: false
+      });
+      continue;
+    }
+
+    if (refs[name]) {
+      Object.defineProperty(namespace, name, {
+        configurable: false,
+        enumerable: true,
+        value: refs[name],
+        writable: false
+      });
+      continue;
+    }
+
+    Object.defineProperty(namespace, name, {
+      configurable: false,
+      enumerable: true,
+      get() {
+        return plainValues[name];
+      }
+    });
+  }
+
+  return Object.freeze(namespace);
 }
 
 function describeTransitionRule(rule) {
@@ -1351,6 +1496,14 @@ function isResourceLike(value) {
   return Boolean(value && typeof value === "object" && value[RESOURCE]);
 }
 
+function isAccessorDescriptor(descriptor) {
+  return Object.hasOwn(descriptor, "get") || Object.hasOwn(descriptor, "set");
+}
+
+function isInternalStoreName(name) {
+  return typeof name === "string" && name.startsWith("_");
+}
+
 function normalizeCreateComputedArgs(optionsOrCompute, maybeCompute, maybeRuntimeOptions) {
   if (typeof optionsOrCompute === "function") {
     return {
@@ -1452,12 +1605,59 @@ function assertValidConfiguredArguments(name, value) {
 }
 
 function createComputedReceiver(options) {
-  return {
-    ...options.context,
-    store: options.store,
-    refs: options.refs,
-    name: options.name
-  };
+  const context = options.context ?? {};
+
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (prop === "store") {
+          return options.store;
+        }
+
+        if (prop === "refs") {
+          return options.refs;
+        }
+
+        if (hasStoreValue(options.store, prop)) {
+          return options.store[prop];
+        }
+
+        if (Object.hasOwn(context, prop)) {
+          return context[prop];
+        }
+
+        if (prop === "name") {
+          return options.name;
+        }
+
+        return undefined;
+      },
+
+      set(_target, prop, value) {
+        if (hasStoreValue(options.store, prop)) {
+          options.store[prop] = value;
+          return true;
+        }
+
+        return false;
+      },
+
+      has(_target, prop) {
+        return (
+          prop === "store" ||
+          prop === "refs" ||
+          prop === "name" ||
+          hasStoreValue(options.store, prop) ||
+          Object.hasOwn(context, prop)
+        );
+      }
+    }
+  );
+}
+
+function hasStoreValue(store, prop) {
+  return typeof prop !== "symbol" && store !== undefined && prop in store;
 }
 
 function createAsyncSignalReceiver(options) {

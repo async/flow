@@ -3,11 +3,15 @@ import test from "node:test";
 import {
   GUARD,
   TRANSITION,
+  bool,
   can,
+  every,
   flow,
   guard,
   matches,
+  not,
   set,
+  some,
   status,
   transition
 } from "@async/flow";
@@ -132,6 +136,76 @@ test("can and matches compute from strict transition metadata and status values"
   assert.equal(checkout.store.inPayment, true);
 });
 
+test("boolean condition helpers compose status matches predicates and can checks", () => {
+  const checkout = flow({
+    store: {
+      phase: status("idle", ["idle", "dragging", "overTarget"]),
+      cardId: null,
+      overColumnId: null,
+      dropped: false,
+      dragging: matches("phase", ["dragging", "overTarget"]),
+      dropReady: every(
+        matches("phase", "overTarget"),
+        (store) => store.cardId,
+        (store) => store.overColumnId
+      ),
+      blocked: not(can("drop")),
+      hasTarget: bool((store) => store.overColumnId),
+      idleOrTargeted: some(
+        matches("phase", "idle"),
+        (store) => store.overColumnId
+      ),
+      contextReady: bool((store) => store.phase === "idle")
+    },
+    on: {
+      start: set({
+        phase: "dragging",
+        cardId: "card-1"
+      }),
+      over: set({
+        phase: "overTarget",
+        overColumnId: "done"
+      }),
+      drop: guard(
+        every(
+          matches("phase", "overTarget"),
+          (store) => store.cardId,
+          (store) => store.overColumnId
+        ),
+        set("dropped", true)
+      )
+    }
+  });
+
+  assert.equal(checkout.store.dragging, false);
+  assert.equal(checkout.store.dropReady, false);
+  assert.equal(checkout.store.blocked, true);
+  assert.equal(checkout.store.hasTarget, false);
+  assert.equal(checkout.store.idleOrTargeted, true);
+  assert.equal(checkout.store.contextReady, true);
+
+  checkout.start();
+  assert.equal(checkout.store.dragging, true);
+  assert.equal(checkout.store.dropReady, false);
+  assert.equal(checkout.store.blocked, true);
+
+  checkout.over();
+  assert.equal(checkout.store.dropReady, true);
+  assert.equal(checkout.store.blocked, false);
+  assert.equal(checkout.store.hasTarget, true);
+  assert.equal(checkout.can("drop"), true);
+
+  checkout.drop();
+  assert.equal(checkout.store.dropped, true);
+});
+
+test("boolean condition helpers reject store key strings", () => {
+  assert.throws(
+    () => bool("missing"),
+    /bool\(\.\.\.\) requires a boolean condition/
+  );
+});
+
 test("flow can and explain cover unknown plain transition and conditioned events", () => {
   const checkout = flow({
     store: {
@@ -210,6 +284,42 @@ test("flow can and explain cover unknown plain transition and conditioned events
   assert.equal(checkout.store.step, "review");
   assert.equal(checkout.can("next"), false);
   assert.equal(checkout.explain("next").reason, "no_matching_transition");
+});
+
+test("transition rules accept composed boolean conditions", () => {
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment"]),
+      approved: false,
+      canNext: can("next")
+    },
+    on: {
+      next: transition("step", {
+        from: "shipping",
+        to: "payment",
+        when: every(matches("step", "shipping"), (store) => store.approved),
+        reason: "approval_required"
+      })
+    }
+  });
+
+  assert.equal(checkout.can("next"), false);
+  assert.equal(checkout.store.canNext, false);
+  assert.deepEqual(checkout.explain("next"), {
+    event: "next",
+    allowed: false,
+    reason: "approval_required",
+    source: "transition",
+    status: "step",
+    current: "shipping"
+  });
+
+  checkout.store.approved = true;
+  assert.equal(checkout.can("next"), true);
+  assert.equal(checkout.store.canNext, true);
+
+  checkout.next();
+  assert.equal(checkout.store.step, "payment");
 });
 
 test("guarded events explain blocked and allowed outcomes with receiver helpers", () => {

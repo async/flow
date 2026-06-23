@@ -8,14 +8,14 @@ Use these docs when the README is too compact:
 - [Layer Guide](layers.md): L1 signal/computed, async signal, and store
   examples;
   L2 Flow events; L2.5 composition; and L3 step helpers.
-- [Signals, Computed, Async Signals, And Store](state-and-store.md): direct
-  refs, computed values, async signal controllers, and store unwrapping.
-- [Async Signal Lifecycle](resources.md): lazy and immediate async signals, load,
+- [Signals, Computed, Async Signals, And Store](state-and-store.md): computed
+  values, async signal controllers, and store unwrapping.
+- [Async Signal Lifecycle](async-signals.md): lazy and immediate async signals, load,
   reload, cancel, manual value writes, and snapshots.
 - [Compose And Status Helpers](compose-and-status.md): `compose`, `parallel`,
   `remember`, `set`, `update`, `when`, `after`, `branch`, `dispatch`,
-  `onError`, `status`, `transition`, `guard`, `can`, `explain`, `describe`,
-  and `matches`.
+  `onError`, `status`, `transition`, `guard`, `bool`, `every`, `some`,
+  `not`, `can`, `explain`, `describe`, and `matches`.
 
 ## API Layers
 
@@ -28,6 +28,7 @@ Subpaths remain available when a consumer wants a narrower entrypoint.
 import {
   after,
   asyncSignal,
+  bool,
   branch,
   compose,
   createAsyncSignal,
@@ -36,10 +37,13 @@ import {
   defineAsyncSignal,
   defineFlow,
   dispatch,
+  every,
   flow,
+  not,
   parallel,
   remember,
   set,
+  some,
   status,
   transition,
   when
@@ -59,5 +63,4 @@ state(...)    -> status(...)
 flow.run      -> flow.dispatch
 run([...])    -> compose([...])
 @async/flow/run -> root compose(...) or @async/flow/compose
-refresh       -> reload
 ```

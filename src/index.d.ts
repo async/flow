@@ -27,7 +27,8 @@ export {
   createStatus,
   createComputed,
   createAsyncSignal,
-  createResource
+  createResource,
+  FLOW_INSTANCE
 } from "./runtime.js";
 export {
   compose,
@@ -40,6 +41,10 @@ export {
   update,
   dispatch,
   after,
+  bool,
+  every,
+  some,
+  not,
   when,
   branch,
   onError,
@@ -50,6 +55,14 @@ export {
   transition,
   can,
   matches
+} from "./helpers.js";
+export type {
+  FlowBooleanCondition,
+  FlowBooleanPredicate,
+  FlowMetadataOptions,
+  FlowPredicate,
+  FlowStepResolver,
+  FlowStepValue
 } from "./helpers.js";
 export {
   createDefaultScheduler,

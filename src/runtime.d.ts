@@ -4,6 +4,8 @@ export type FlowScheduler = {
   flush?(): Promise<void>;
 };
 
+export declare const FLOW_INSTANCE: unique symbol;
+
 export type Signal<T = unknown> = {
   readonly kind: "signal";
   value: T;
@@ -32,7 +34,7 @@ export type ComputedOptions = {
   readonly arguments?: readonly unknown[] | ((store: Record<string, unknown> | undefined) => readonly unknown[]);
 } & Record<string, unknown>;
 
-export type ComputedReceiver = {
+export type ComputedReceiver = Record<string, unknown> & {
   readonly store?: Record<string, unknown>;
   readonly refs?: Record<string, unknown>;
   readonly name?: string;
@@ -160,6 +162,8 @@ export type StoreInstance = {
 };
 
 export type FlowInstance = {
+  readonly [FLOW_INSTANCE]: true;
+  readonly _: Record<string, unknown>;
   readonly store: Record<string, unknown>;
   readonly refs: Record<string, SignalLike>;
   readonly resources: Record<string, unknown>;
@@ -176,7 +180,7 @@ export type FlowInstance = {
   snapshot(): Record<string, unknown>;
   restore(snapshot: Record<string, unknown>): void;
   destroy(): void;
-};
+} & Record<string, unknown>;
 
 export function createSignal<T>(initial: T, options?: { scheduler?: FlowScheduler }): Signal<T>;
 export function createStatus<T>(

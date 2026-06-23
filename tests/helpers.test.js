@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { flow } from "@async/flow";
+import { every, flow, matches, status } from "@async/flow";
 import { compose } from "@async/flow/compose";
 import { after, branch, dispatch, onError, set, update, when } from "@async/flow/steps";
 
@@ -153,6 +153,40 @@ test("branch runs the first matching case or the default handler", () => {
   assert.equal(checkout.store.step, "WaitForCompletion");
 });
 
+test("branch accepts composed boolean conditions", () => {
+  const checkout = flow({
+    store: {
+      step: status("idle", ["idle", "ready"]),
+      canSubmit: false,
+      path: null
+    },
+    on: {
+      route: branch([
+        [
+          every(matches("step", "ready"), (store) => store.canSubmit),
+          set("path", "submit")
+        ],
+        {
+          when: matches("step", "ready"),
+          then: set("path", "ready")
+        },
+        set("path", "fallback")
+      ])
+    }
+  });
+
+  checkout.route();
+  assert.equal(checkout.store.path, "fallback");
+
+  checkout.store.step = "ready";
+  checkout.route();
+  assert.equal(checkout.store.path, "ready");
+
+  checkout.store.canSubmit = true;
+  checkout.route();
+  assert.equal(checkout.store.path, "submit");
+});
+
 test("compose helpers can be used as a normal Flow handler function", async () => {
   const checkout = flow({
     store: {
@@ -202,6 +236,30 @@ test("when stops a helper chain without applying later steps", () => {
 
   assert.equal(checkout.submit(), undefined);
   assert.equal(checkout.store.loading, false);
+});
+
+test("when accepts composed boolean conditions", () => {
+  const checkout = flow({
+    store: {
+      step: status("idle", ["idle", "ready"]),
+      canSubmit: false,
+      submitted: false
+    },
+    on: {
+      submit: compose([
+        when(every(matches("step", "ready"), (store) => store.canSubmit)),
+        set("submitted", true)
+      ])
+    }
+  });
+
+  checkout.submit();
+  assert.equal(checkout.store.submitted, false);
+
+  checkout.store.step = "ready";
+  checkout.store.canSubmit = true;
+  checkout.submit();
+  assert.equal(checkout.store.submitted, true);
 });
 
 test("onError maps sync throws and async rejections to store updates", async () => {

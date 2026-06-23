@@ -199,9 +199,9 @@ test("lazy async signals read as values in store and expose controllers through 
   const greetingFlow = flow({
     store: {
       name: "World",
-      greeting: asyncSignal({ arguments: (store) => [store.name] }, async function (name) {
+      greeting: asyncSignal(async function () {
+        const name = this.store.name;
         assert.equal(this.signal instanceof AbortSignal, true);
-        assert.equal(this.store.name, name);
         assert.equal(this.refs.greeting, this.resources.greeting);
         assert.equal(this.name, "greeting");
         return `Hello ${name}`;
@@ -209,10 +209,10 @@ test("lazy async signals read as values in store and expose controllers through 
     },
     on: {
       fetch() {
-        return this.refs.greeting.load();
+        return this.resources.greeting.load();
       },
       retry() {
-        return this.refs.greeting.reload();
+        return this.resources.greeting.reload();
       },
       replace(store, input) {
         store.greeting = input.value;
@@ -234,6 +234,114 @@ test("lazy async signals read as values in store and expose controllers through 
   assert.equal(greetingFlow.cancel(), "ready");
   greetingFlow.store.greeting = "direct";
   assert.equal(greetingFlow.refs.greeting.get(), "direct");
+});
+
+test("underscore async signals expose internal controllers through store and namespace", async () => {
+  const greetingFlow = flow({
+    store: {
+      name: "World",
+      _request: asyncSignal(async function () {
+        return `Hello ${this.store.name}`;
+      }),
+      get status() {
+        return this._request.status;
+      },
+      get value() {
+        return this._request.get();
+      }
+    },
+    on: {
+      fetch() {
+        return this.store._request.load();
+      },
+      retry() {
+        return this.store._request.reload();
+      },
+      replace(_store, input) {
+        return this.store._request.set(input.value);
+      },
+      cancel(_store, reason) {
+        return this.store._request.cancel(reason);
+      }
+    }
+  });
+
+  assert.equal(Object.hasOwn(greetingFlow, "_request"), false);
+  assert.equal(Object.keys(greetingFlow).includes("_"), false);
+  assert.equal(greetingFlow._._request, greetingFlow.store._request);
+  assert.equal(greetingFlow.store._request.status, "idle");
+  assert.equal(greetingFlow.status, "idle");
+  assert.equal(greetingFlow.value, undefined);
+  assert.equal(await greetingFlow.fetch(), "Hello World");
+  assert.equal(greetingFlow.store._request.status, "ready");
+  assert.equal(greetingFlow.store._request.get(), "Hello World");
+  assert.equal(greetingFlow.status, "ready");
+  assert.equal(greetingFlow.value, "Hello World");
+  assert.equal(await greetingFlow.retry(), "Hello World");
+  assert.equal(greetingFlow.replace({ value: "Hi World" }), "Hi World");
+  assert.equal(greetingFlow.cancel("stop"), "ready");
+});
+
+test("async signal lifecycle getters track computed store values", async () => {
+  const runs = [];
+  const profile = flow({
+    store: {
+      _request: asyncSignal(async function () {
+        const run = deferred();
+        runs.push(run);
+        return run.promise;
+      }),
+      get status() {
+        return this._request.status;
+      },
+      get value() {
+        return this._request.get();
+      }
+    },
+    on: {
+      load() {
+        return this.store._request.load();
+      },
+      reload() {
+        return this.store._request.reload();
+      },
+      replace(_store, value) {
+        return this.store._request.set(value);
+      }
+    }
+  });
+  const statuses = [];
+  const values = [];
+
+  profile.subscribe("status", (value) => statuses.push(value));
+  profile.subscribe("value", (value) => values.push(value));
+
+  const first = profile.load();
+  assert.equal(profile.status, "loading");
+  assert.deepEqual(statuses, ["loading"]);
+  await Promise.resolve();
+  runs[0].resolve("Ada");
+  assert.equal(await first, "Ada");
+  assert.equal(profile.status, "ready");
+  assert.equal(profile.value, "Ada");
+  assert.deepEqual(statuses, ["loading", "ready"]);
+  assert.deepEqual(values, ["Ada"]);
+
+  const second = profile.reload();
+  assert.equal(profile.status, "loading");
+  await Promise.resolve();
+  runs[1].reject(new Error("failed"));
+  await assert.rejects(() => second, /failed/);
+  assert.equal(profile.status, "error");
+  assert.equal(profile.value, "Ada");
+  assert.deepEqual(statuses, ["loading", "ready", "loading", "error"]);
+  assert.deepEqual(values, ["Ada"]);
+
+  assert.equal(profile.replace("Grace"), "Grace");
+  assert.equal(profile.status, "ready");
+  assert.equal(profile.value, "Grace");
+  assert.deepEqual(statuses, ["loading", "ready", "loading", "error", "ready"]);
+  assert.deepEqual(values, ["Ada", "Grace"]);
 });
 
 test("immediate async signals are value-like in store and controller-like through refs and resources", async () => {

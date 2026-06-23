@@ -8,7 +8,7 @@ signals, and small workflow helpers without adopting a full statechart engine.
 Pick the smallest layer that solves the problem:
 
 - L1 primitives: use `createSignal`, `createComputed`, `createAsyncSignal`, and
-  `createStore` when an adapter or library needs explicit refs and controllers.
+  `createStore` when an adapter or library needs explicit values and controllers.
 - L2 Flow: use `flow(...)` when state changes should run through named events
   and batched plain functions.
 - L2.5 composition: use `compose(...)` and `parallel(...)` when a Flow handler
@@ -48,27 +48,26 @@ const counter = flow({
 
 counter.dispatch("increment", { by: 2 });
 
-counter.store.count; // 2
-counter.refs.phase.get(); // "active"
+counter.count; // 2
+counter.phase; // "active"
 ```
 
 A Flow instance combines:
 
 - `store`: author-facing values with getter/setter behavior.
-- `refs`: explicit signal, status, computed, and async signal refs for adapters.
-- `resources`: compatibility view of async signal controllers.
+- `_`: non-enumerable internal controller namespace for `_` store fields.
 - `dispatch(name, input)`: event execution.
 - `can(name, input?)`: event availability checks.
 - `explain(name, input?)`: structured blocked-event reasons.
-- `describe()`: public inspection metadata for stores, resources, handlers,
-  transitions, and guards.
+- `describe()`: public inspection metadata for stores, handlers, transitions,
+  and guards.
 
 The package also provides `compose(...)`, `parallel(...)`, and `remember(...)`
 for ordered handler steps.
 
 ## Store Values
 
-Plain primitives and arrays become writable store refs. Computed values are
+Plain primitives and arrays become writable store values. Computed values are
 read-only. Plain record values stay explicit; use `signal(value)` when an object
 should be a single writable value.
 
@@ -80,9 +79,11 @@ const cart = flow({
     items: [],
     settings: signal({ currency: "USD" }),
     count: computed(function () {
-      return this.store.items.length;
+      return this.items.length;
     }),
-    isEmpty: computed({ arguments: (store) => [store.count] }, (count) => count === 0),
+    isEmpty: computed(function () {
+      return this.count === 0;
+    }),
     phase: status("idle", ["idle", "ready"])
   },
 
@@ -96,17 +97,18 @@ const cart = flow({
 
 cart.dispatch("add", { item: { id: "sku_123" } });
 
-cart.store.count; // 1
-cart.refs.items.get(); // [{ id: "sku_123" }]
-cart.store.settings = { currency: "EUR" };
+cart.count; // 1
+cart.items; // [{ id: "sku_123" }]
+cart.settings = { currency: "EUR" };
 ```
+
+Computed function callbacks read store values directly from `this`.
 
 ## Async Signals
 
 `asyncSignal(loader)` declares a lazy async value with lifecycle state and
-explicit controls. Loaders receive user data from `options.arguments` or
-explicit `load(...args)` calls. Flow context and lifecycle tools are available
-through the function receiver.
+explicit controls. Loaders read Flow store data through `this.store`; lifecycle
+tools are available through the function receiver.
 
 ```js
 import { asyncSignal, flow } from "@async/flow";
@@ -114,59 +116,71 @@ import { asyncSignal, flow } from "@async/flow";
 const greeting = flow({
   store: {
     name: "World",
-    greeting: asyncSignal({ arguments: (store) => [store.name] }, async function (name) {
-      const response = await fetch(`/api/greeting/${name}`, { signal: this.signal });
+    _request: asyncSignal(async function () {
+      const response = await fetch(`/api/greeting/${this.store.name}`, {
+        signal: this.signal
+      });
       return response.text();
-    })
+    }),
+    get status() {
+      return this._request.status;
+    },
+    get value() {
+      return this._request.get();
+    }
   },
 
   on: {
     fetch() {
-      return this.refs.greeting.load();
+      return this.store._request.load();
     },
 
     reload() {
-      return this.refs.greeting.reload();
+      return this.store._request.reload();
     },
 
     cancel(_store, reason) {
-      return this.refs.greeting.cancel(reason);
+      return this.store._request.cancel(reason);
     }
   }
 });
 
-await greeting.dispatch("fetch");
+await greeting.fetch();
 
-greeting.store.greeting; // loaded text
-greeting.refs.greeting.status; // "ready"
+greeting.value; // loaded text
+greeting.status; // "ready"
 ```
 
-Lazy and immediate async signals both read as current values through `store`.
-The controller lives under `refs`; `resources` remains a compatibility view of
-the same controller.
+Lazy and immediate async signals can both use internal fields starting with `_` for
+controller methods while exposing public getters as normal Flow values.
 
 ```js
 const profile = flow({
   store: {
-    user: asyncSignal({ immediate: true }, async function () {
+    _user: asyncSignal({ immediate: true }, async function () {
       const response = await fetch("/api/user", { signal: this.signal });
       return response.json();
-    })
+    }),
+    get user() {
+      return this._user.get();
+    },
+    get status() {
+      return this._user.status;
+    }
   },
 
   on: {
-    refreshUser() {
-      return this.refs.user.reload();
+    reloadUser() {
+      return this.store._user.reload();
     }
   }
 });
 
-profile.store.user; // current value
-profile.refs.user.status; // "loading", "ready", or "error"
-profile.resources.user === profile.refs.user; // true
+profile.user; // current value
+profile.status; // "loading", "ready", or "error"
 ```
 
-More detail: [Async Signal Lifecycle](docs/resources.md).
+More detail: [Async Signal Lifecycle](docs/async-signals.md).
 
 ## Compose And Step Workflows
 
@@ -177,19 +191,21 @@ step helpers when the repeated parts are store writes, gates, branches, event
 dispatches, or scheduled follow-up events.
 
 ```js
-import { compose, flow, parallel, set, status, when } from "@async/flow";
+import { compose, every, flow, matches, not, parallel, set, status, when } from "@async/flow";
 
 const checkout = flow({
   store: {
     step: status("shipping", ["shipping", "payment", "review"]),
     canSubmit: true,
+    readyToSubmit: every(matches("step", "review"), (store) => store.canSubmit),
+    blocked: not((store) => store.readyToSubmit),
     loading: false,
     orderId: null
   },
 
   on: {
     submit: compose([
-      when((store) => store.step === "review" && store.canSubmit),
+      when((store) => store.readyToSubmit),
       set("loading", true),
       parallel({
         inventory(_store, input) {
@@ -282,9 +298,8 @@ const appFlow = flow(
 );
 ```
 
-Receiver capabilities include `this.store`, `this.refs`, `this.resources`,
-`this.dispatch(name, input)`, `this.can(name, input)`,
-`this.explain(name, input)`, `this.describe()`,
+Receiver capabilities include `this.store`, `this.dispatch(name, input)`,
+`this.can(name, input)`, `this.explain(name, input)`, `this.describe()`,
 `this.after(ms, eventName, input)`, and `this.dispose(cleanup)`.
 
 ## Root And Subpaths
@@ -296,6 +311,7 @@ when a consumer wants a narrower entrypoint.
 import {
   after,
   asyncSignal,
+  bool,
   branch,
   compose,
   computed,
@@ -306,11 +322,15 @@ import {
   defineAsyncSignal,
   defineFlow,
   dispatch,
+  every,
   flow,
+  matches,
+  not,
   parallel,
   remember,
   set,
   signal,
+  some,
   status,
   when
 } from "@async/flow";
@@ -324,7 +344,7 @@ export or the narrow `@async/flow/compose` entrypoint.
 - [Docs Index](docs/README.md)
 - [Layer Guide](docs/layers.md)
 - [Signals, Computed, Async Signals, And Store](docs/state-and-store.md)
-- [Async Signal Lifecycle](docs/resources.md)
+- [Async Signal Lifecycle](docs/async-signals.md)
 - [Compose And Status Helpers](docs/compose-and-status.md)
 
 ## Package Checks

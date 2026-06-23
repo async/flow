@@ -106,9 +106,12 @@ export function defineFlow(config = {}) {
     }
   }
 
+  const normalizedStore = {};
+  Object.defineProperties(normalizedStore, Object.getOwnPropertyDescriptors(store));
+
   return {
     kind: FLOW_DEFINITION,
-    store: { ...store },
+    store: normalizedStore,
     on: { ...on }
   };
 }

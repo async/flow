@@ -1,4 +1,5 @@
 import type { FlowHandler } from "./runtime.js";
+import type { FlowComputedDefinition } from "./define.js";
 
 export const TRANSITION: unique symbol;
 export const GUARD: unique symbol;
@@ -18,10 +19,19 @@ export type FlowPredicate = (
   input: unknown,
   previous: unknown
 ) => boolean;
+export type FlowBooleanPredicate = (
+  this: unknown,
+  store: Record<string, unknown>,
+  input: unknown,
+  previous: unknown
+) => unknown;
+export type FlowBooleanCondition =
+  | FlowComputedDefinition<unknown>
+  | FlowBooleanPredicate;
 export type FlowBranchCase =
-  | readonly [FlowPredicate, FlowHandler]
+  | readonly [FlowBooleanCondition, FlowHandler]
   | {
-      when?: FlowPredicate;
+      when?: FlowBooleanCondition;
       then: FlowHandler;
       default?: boolean;
     }
@@ -34,8 +44,12 @@ export function update(
   name: string,
   fn: (current: unknown, store: Record<string, unknown>, input: unknown, previous: unknown) => unknown
 ): FlowHandler;
+export function bool(condition: FlowBooleanCondition): FlowComputedDefinition<boolean>;
+export function every(...conditions: FlowBooleanCondition[]): FlowComputedDefinition<boolean>;
+export function some(...conditions: FlowBooleanCondition[]): FlowComputedDefinition<boolean>;
+export function not(condition: FlowBooleanCondition): FlowComputedDefinition<boolean>;
 export function when(
-  predicate: FlowPredicate
+  predicate: FlowBooleanCondition
 ): FlowHandler;
 export function branch(cases: readonly FlowBranchCase[]): FlowHandler;
 export function onError(
@@ -43,7 +57,7 @@ export function onError(
   handler: FlowHandler
 ): FlowHandler;
 export function guard(
-  predicate: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean,
+  predicate: FlowBooleanCondition,
   handler: FlowHandler,
   options?: FlowMetadataOptions
 ): FlowHandler;
@@ -54,14 +68,14 @@ export function transition(
     | ({
         from?: unknown | readonly unknown[];
         to: unknown;
-        when?: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean;
+        when?: FlowBooleanCondition;
       } & FlowMetadataOptions)
     | readonly ({
         from?: unknown | readonly unknown[];
         to: unknown;
-        when?: (store: Record<string, unknown>, input: unknown, previous: unknown) => boolean;
+        when?: FlowBooleanCondition;
       } & FlowMetadataOptions)[]
 ): FlowHandler;
-export function can(eventName: string): unknown;
-export function can(statusName: string, eventName: string): unknown;
-export function matches(statusName: string, value: unknown): unknown;
+export function can(eventName: string): FlowComputedDefinition<boolean>;
+export function can(statusName: string, eventName: string): FlowComputedDefinition<boolean>;
+export function matches(statusName: string, value: unknown | readonly unknown[]): FlowComputedDefinition<boolean>;

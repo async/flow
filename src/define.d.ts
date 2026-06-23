@@ -52,7 +52,7 @@ export type FlowDefinitionContext = {
   };
 };
 
-export type FlowComputedReceiver = {
+export type FlowComputedReceiver = Record<string, unknown> & {
   readonly store?: Record<string, unknown>;
   readonly refs?: Record<string, unknown>;
   readonly name?: string;
