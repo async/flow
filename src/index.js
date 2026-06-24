@@ -13,7 +13,6 @@ export {
   ASYNC_SIGNAL_IMMEDIATE,
   defineSignal as signal,
   defineComputed as computed,
-  defineStatus as status,
   defineAsyncSignal as asyncSignal,
   isAsyncSignal,
   isAsyncSignalDefinition,
@@ -26,7 +25,8 @@ export {
   createStatus,
   createComputed,
   createAsyncSignal,
-  FLOW_INSTANCE
+  FLOW_INSTANCE,
+  FLOW_INSPECT
 } from "./runtime.js";
 export {
   compose,
@@ -49,11 +49,15 @@ export {
   AVAILABILITY,
   TRANSITION,
   GUARD,
-  status as statusHelper,
+  STANDALONE_TRANSITION,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  status,
   guard,
   transition,
   can,
-  matches
+  matches,
+  inspect
 } from "./helpers.js";
 export {
   createDefaultScheduler,

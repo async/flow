@@ -15,7 +15,7 @@ Use these docs when the README is too compact:
 - [Compose And Status Helpers](compose-and-status.md): `compose`, `parallel`,
   `remember`, `set`, `update`, `when`, `after`, `branch`, `dispatch`,
   `onError`, `status`, `transition`, `guard`, `bool`, `every`, `some`,
-  `not`, `can`, `explain`, `describe`, and `matches`.
+  `not`, `can`, `explain`, `inspect`, and `matches`.
 
 ## API Layers
 
@@ -53,14 +53,15 @@ import {
 Top-level `flow(...)` creates a live standalone Flow instance. Definition
 helpers are import-safe and do not create shared live state at module load time.
 
-## Current Names
+## Current Entrypoints
 
-Use the current names in new code:
+Use the current entrypoints in new code:
 
 ```text
-signals       -> store
-state(...)    -> status(...)
-flow.run      -> flow.dispatch
-run([...])    -> compose([...])
-@async/flow/run -> root compose(...) or @async/flow/compose
+flow(...)                 live Flow instance
+compose([...])            ordered handler pipeline
+dispatch("event", input)  reusable deferred sender
+dispatch(target, "event") immediate event-sink dispatch
+status(...)               live signal-based status ref
+defineStatus(...)         pure status declaration
 ```

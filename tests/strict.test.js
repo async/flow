@@ -2,19 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AVAILABILITY,
+  FLOW_INSTANCE,
   GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
   TRANSITION,
+  after,
   bool,
   can,
+  dispatch,
   every,
   flow,
   guard,
+  inspect,
   matches,
   not,
   set,
   some,
   status,
   transition,
+  update,
   when
 } from "@async/flow";
 import { compose } from "@async/flow/compose";
@@ -26,7 +34,7 @@ test("status stores values in writable Flow refs and validates writes", () => {
     }
   });
 
-  assert.equal(checkout.refs.step.kind, "status");
+  assert.equal(checkout.refs.step.type, "status");
   checkout.store.step = "payment";
   assert.equal(checkout.store.step, "payment");
   assert.throws(
@@ -56,6 +64,310 @@ test("transition writes matching status changes and no-ops when no rule matches"
   assert.equal(checkout.store.step, "review");
   checkout.next();
   assert.equal(checkout.store.step, "review");
+});
+
+test("standalone status transition can and matches helpers track live refs", () => {
+  const phase = status("idle", ["idle", "dragging", "dropped"]);
+  const startDragging = transition(phase, {
+    idle: "dragging"
+  });
+  const drop = transition(phase, {
+    dragging: "dropped"
+  });
+  const canStartDragging = can(startDragging);
+  const canDrop = can(drop);
+  const isDragging = matches(phase, "dragging");
+
+  assert.equal(startDragging[TRANSITION], undefined);
+  assert.equal(startDragging[STANDALONE_TRANSITION].target, phase);
+  assert.equal(startDragging[Symbol.for("@async/flow.standaloneTransition")].target, phase);
+  assert.equal(canStartDragging.get(), true);
+  assert.equal(canDrop.get(), false);
+  assert.equal(isDragging.get(), false);
+
+  assert.equal(startDragging(), undefined);
+  assert.equal(phase.get(), "dragging");
+  assert.equal(canStartDragging.get(), false);
+  assert.equal(canDrop.get(), true);
+  assert.equal(isDragging.get(), true);
+
+  assert.equal(drop(), undefined);
+  assert.equal(phase.get(), "dropped");
+  assert.equal(canDrop.get(), false);
+});
+
+test("standalone after schedules callbacks and can be cancelled", async () => {
+  const phase = status("idle", ["idle", "ready", "cancelled"]);
+  const markReady = after(0, (next) => {
+    phase.set(next);
+  }, "ready");
+
+  assert.equal(markReady[STANDALONE_AFTER].ms, 0);
+  assert.equal(markReady[Symbol.for("@async/flow.standaloneAfter")].ms, 0);
+  assert.deepEqual(inspect(markReady), {
+    type: "after",
+    ms: 0
+  });
+
+  const cancelReady = markReady();
+  assert.equal(typeof cancelReady, "function");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(phase.get(), "ready");
+
+  const markCancelled = after(5, () => {
+    phase.set("cancelled");
+  });
+  const cancelCancelled = markCancelled();
+  cancelCancelled();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(phase.get(), "ready");
+});
+
+test("standalone dispatch sender works with Flow DOM emitter and sender targets", () => {
+  const checkout = flow({
+    store: {
+      lastReady: null
+    },
+    on: {
+      ready(store, input) {
+        store.lastReady = input.id;
+        return `flow:${input.id}`;
+      }
+    }
+  });
+  const ready = dispatch("ready", { id: 1 });
+
+  assert.equal(ready[STANDALONE_DISPATCH].event, "ready");
+  assert.equal(ready[STANDALONE_DISPATCH].payload, true);
+  assert.equal(ready[Symbol.for("@async/flow.standaloneDispatch")].event, "ready");
+  assert.deepEqual(inspect(ready), {
+    type: "dispatch",
+    event: "ready",
+    payload: true
+  });
+
+  assert.equal(ready.call(checkout), "flow:1");
+  assert.equal(checkout.store.lastReady, 1);
+
+  const target = new EventTarget();
+  let receivedEvent;
+  target.addEventListener("ready", (event) => {
+    receivedEvent = event;
+  });
+
+  assert.equal(ready.call(target), true);
+  assert.equal(receivedEvent.type, "ready");
+  assert.equal(receivedEvent.bubbles, true);
+  assert.equal(receivedEvent.composed, true);
+  assert.deepEqual(receivedEvent.detail, { id: 1 });
+  assert.equal(receivedEvent[STANDALONE_DISPATCH], true);
+
+  const emitter = {
+    calls: [],
+    emit(eventName, payload) {
+      this.calls.push([eventName, payload]);
+      return "emitted";
+    }
+  };
+  assert.equal(ready.emit(emitter, { id: 2 }), "emitted");
+  assert.deepEqual(emitter.calls, [["ready", { id: 2 }]]);
+
+  const sender = {
+    calls: [],
+    send(eventName, payload) {
+      this.calls.push([eventName, payload]);
+      return "sent";
+    }
+  };
+  assert.equal(ready.send(sender, { id: 3 }), "sent");
+  assert.deepEqual(sender.calls, [["ready", { id: 3 }]]);
+  assert.equal(ready(), false);
+});
+
+test("dispatch immediately targets Flow DOM emitter and sender sinks", () => {
+  const checkout = flow({
+    store: {
+      lastReady: null
+    },
+    on: {
+      start() {
+        return dispatch(this, "ready", { id: 4 });
+      },
+      ready(store, input) {
+        store.lastReady = input.id;
+        return `ready:${input.id}`;
+      }
+    }
+  });
+
+  assert.equal(dispatch(checkout, "ready", { id: 5 }), "ready:5");
+  assert.equal(checkout.store.lastReady, 5);
+  assert.throws(() => dispatch(checkout, "missing"), /Unknown Flow handler/);
+  assert.equal(checkout.start(), "ready:4");
+  assert.equal(checkout.store.lastReady, 4);
+
+  const target = new EventTarget();
+  let plainEvent;
+  target.addEventListener("plain", (event) => {
+    plainEvent = event;
+  });
+  assert.equal(dispatch(target, "plain"), true);
+  assert.equal(plainEvent.type, "plain");
+  assert.equal(plainEvent.bubbles, true);
+  assert.equal(plainEvent.composed, true);
+  assert.equal("detail" in plainEvent, false);
+  assert.equal(plainEvent[STANDALONE_DISPATCH], true);
+
+  const emitter = {
+    emit(eventName, payload) {
+      return [eventName, payload];
+    }
+  };
+  assert.deepEqual(dispatch(emitter, "ready", { id: 6 }), ["ready", { id: 6 }]);
+
+  const sender = {
+    send(eventName, payload) {
+      return [eventName, payload];
+    }
+  };
+  assert.deepEqual(dispatch(sender, "ready", { id: 7 }), ["ready", { id: 7 }]);
+});
+
+test("dispatch target selection is best effort with stable precedence", () => {
+  assert.equal(dispatch({}, "ready"), false);
+  assert.equal(dispatch(undefined, "ready"), false);
+  assert.throws(() => dispatch({}, ""), /dispatch\(\.\.\.\) requires an event name/);
+
+  const mixed = {
+    [FLOW_INSTANCE]: true,
+    dispatch(eventName, payload) {
+      return ["flow", eventName, payload];
+    },
+    explain() {
+      return { allowed: true };
+    },
+    dispatchEvent() {
+      throw new Error("DOM path should not run.");
+    },
+    emit() {
+      throw new Error("emitter path should not run.");
+    },
+    send() {
+      throw new Error("sender path should not run.");
+    }
+  };
+  assert.deepEqual(dispatch(mixed, "ready", { id: 8 }), ["flow", "ready", { id: 8 }]);
+
+  const restoreCustomEvent = replaceGlobal("CustomEvent", undefined);
+  try {
+    assert.equal(dispatch(new EventTarget(), "ready", { id: 9 }), false);
+  } finally {
+    restoreCustomEvent();
+  }
+
+  const restoreEvent = replaceGlobal("Event", undefined);
+  try {
+    assert.equal(dispatch(new EventTarget(), "ready"), false);
+  } finally {
+    restoreEvent();
+  }
+});
+
+test("inspect returns safe standalone helper metadata", () => {
+  const phase = status("idle", ["idle", "dragging", "dropped"]);
+  const startDragging = transition(phase, {
+    idle: "dragging"
+  });
+  const canStartDragging = can(startDragging);
+
+  assert.deepEqual(inspect(phase), {
+    type: "status",
+    value: "idle",
+    allowed: ["idle", "dragging", "dropped"]
+  });
+  assert.deepEqual(inspect(startDragging), {
+    type: "transition",
+    target: {
+      type: "status",
+      value: "idle",
+      allowed: ["idle", "dragging", "dropped"]
+    },
+    rules: [
+      {
+        conditional: false,
+        from: "idle",
+        to: "dragging"
+      }
+    ]
+  });
+  assert.deepEqual(inspect(canStartDragging), {
+    type: "computed",
+    value: true
+  });
+
+  startDragging();
+  assert.equal(inspect(phase).value, "dragging");
+  assert.equal(inspect(canStartDragging).value, false);
+});
+
+test("set update and boolean helpers work directly with standalone refs", () => {
+  const phase = status("idle", ["idle", "dragging", "dropped"]);
+  const enabled = status(false, [false, true]);
+  const isDragging = matches(phase, "dragging");
+  const canDrop = every(isDragging, enabled);
+  const canStart = some(matches(phase, "idle"), enabled);
+  const disabled = not(enabled);
+  const enabledNow = bool(enabled);
+
+  assert.equal(canDrop.get(), false);
+  assert.equal(canStart.get(), true);
+  assert.equal(disabled.get(), true);
+  assert.equal(enabledNow.get(), false);
+
+  set(phase, "dragging")();
+  assert.equal(phase.get(), "dragging");
+  assert.equal(canDrop.get(), false);
+
+  update(enabled, (current) => !current)();
+  assert.equal(enabled.get(), true);
+  assert.equal(canDrop.get(), true);
+  assert.equal(canStart.get(), true);
+  assert.equal(disabled.get(), false);
+  assert.equal(enabledNow.get(), true);
+
+  set(phase, (_store, input) => input.next)(undefined, { next: "dropped" });
+  assert.equal(phase.get(), "dropped");
+  assert.equal(canDrop.get(), false);
+});
+
+test("transition resolves string targets from branded Flow receivers", () => {
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment"])
+    }
+  });
+  const move = transition("step", {
+    from: "shipping",
+    to: "payment",
+    when(store) {
+      return store.step === "shipping";
+    }
+  });
+
+  assert.equal(checkout[Symbol.for("@async/flow.instance")], true);
+  assert.deepEqual(inspect(move), {
+    type: "transition",
+    status: "step",
+    rules: [
+      {
+        conditional: true,
+        from: "shipping",
+        to: "payment"
+      }
+    ]
+  });
+  assert.equal(move.call(checkout), undefined);
+  assert.equal(checkout.store.step, "payment");
 });
 
 test("guard skips the handler when the predicate is false", () => {
@@ -145,7 +457,7 @@ test("compose lifts leading availability gates into event inspection", () => {
     }
   });
 
-  assert.equal(checkout.can("submit", { confirm: true }), false);
+  assert.equal(can(checkout, "submit", { confirm: true }).get(), false);
   assert.equal(checkout.store.canSubmitNow, false);
   assert.deepEqual(checkout.explain("submit", { confirm: true }), {
     event: "submit",
@@ -154,17 +466,17 @@ test("compose lifts leading availability gates into event inspection", () => {
     source: "guard",
     label: "Submit order"
   });
-  assert.deepEqual(checkout.describe().guards.submit, {
+  assert.deepEqual(inspect(checkout).guards.submit, {
     conditional: true,
     reason: "not_ready",
     label: "Submit order"
   });
-  assert.equal(Object.hasOwn(checkout.describe().guards.submit, "predicate"), false);
+  assert.equal(Object.hasOwn(inspect(checkout).guards.submit, "predicate"), false);
   assert.equal(checkout.submit({ confirm: true }), undefined);
   assert.equal(checkout.store.loading, false);
 
   checkout.store.readyToSubmit = true;
-  assert.equal(checkout.can("submit", { confirm: true }), true);
+  assert.equal(can(checkout, "submit", { confirm: true }).get(), true);
   assert.deepEqual(checkout.explain("submit", { confirm: true }), {
     event: "submit",
     allowed: true,
@@ -216,7 +528,7 @@ test("multiple leading availability gates report the first failed gate", () => {
     label: "Confirm submit"
   });
 
-  assert.equal(checkout.can("submit", { confirm: true }), true);
+  assert.equal(can(checkout, "submit", { confirm: true }).get(), true);
   checkout.submit({ confirm: true });
   assert.equal(checkout.store.submitted, true);
 });
@@ -267,7 +579,7 @@ test("compose does not lift later availability gates", () => {
     }
   });
 
-  assert.equal(checkout.can("submit"), true);
+  assert.equal(can(checkout, "submit").get(), true);
   assert.deepEqual(checkout.explain("submit"), {
     event: "submit",
     allowed: true,
@@ -358,7 +670,7 @@ test("boolean condition helpers compose status matches predicates and can checks
   assert.equal(checkout.store.dropReady, true);
   assert.equal(checkout.store.blocked, false);
   assert.equal(checkout.store.hasTarget, true);
-  assert.equal(checkout.can("drop"), true);
+  assert.equal(can(checkout, "drop").get(), true);
 
   checkout.drop();
   assert.equal(checkout.store.dropped, true);
@@ -402,20 +714,20 @@ test("flow can and explain cover unknown plain transition and conditioned events
     }
   });
 
-  assert.equal(checkout.can("missing"), false);
+  assert.equal(can(checkout, "missing").get(), false);
   assert.deepEqual(checkout.explain("missing"), {
     event: "missing",
     allowed: false,
     reason: "unknown_event"
   });
-  assert.equal(checkout.can("ping"), true);
+  assert.equal(can(checkout, "ping").get(), true);
   assert.deepEqual(checkout.explain("ping"), {
     event: "ping",
     allowed: true,
     reason: "plain_handler",
     source: "handler"
   });
-  assert.equal(checkout.can("next", { allow: false }), false);
+  assert.equal(can(checkout, "next", { allow: false }).get(), false);
   assert.equal(checkout.store.attempts, 0);
   assert.deepEqual(checkout.explain("next", { allow: false }), {
     event: "next",
@@ -426,7 +738,7 @@ test("flow can and explain cover unknown plain transition and conditioned events
     current: "shipping",
     label: "Continue"
   });
-  assert.equal(checkout.can("next", { allow: true }), true);
+  assert.equal(can(checkout, "next", { allow: true }).get(), true);
   assert.deepEqual(checkout.explain("next", { allow: true }), {
     event: "next",
     allowed: true,
@@ -447,8 +759,36 @@ test("flow can and explain cover unknown plain transition and conditioned events
 
   checkout.next();
   assert.equal(checkout.store.step, "review");
-  assert.equal(checkout.can("next"), false);
+  assert.equal(can(checkout, "next").get(), false);
   assert.equal(checkout.explain("next").reason, "no_matching_transition");
+});
+
+test("status matches and can helpers work as standalone computed refs", () => {
+  const phase = status("idle", ["idle", "dragging"]);
+  const dragging = matches(phase, "dragging");
+
+  assert.equal(dragging.get(), false);
+  phase.set("dragging");
+  assert.equal(dragging.get(), true);
+
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment"]),
+      approved: false
+    },
+    on: {
+      next: transition("step", {
+        from: "shipping",
+        to: "payment",
+        when: (store) => store.approved
+      })
+    }
+  });
+  const canGoNext = can(checkout, "next");
+
+  assert.equal(canGoNext.get(), false);
+  checkout.store.approved = true;
+  assert.equal(canGoNext.get(), true);
 });
 
 test("transition rules accept composed boolean conditions", () => {
@@ -468,7 +808,7 @@ test("transition rules accept composed boolean conditions", () => {
     }
   });
 
-  assert.equal(checkout.can("next"), false);
+  assert.equal(can(checkout, "next").get(), false);
   assert.equal(checkout.store.canNext, false);
   assert.deepEqual(checkout.explain("next"), {
     event: "next",
@@ -480,7 +820,7 @@ test("transition rules accept composed boolean conditions", () => {
   });
 
   checkout.store.approved = true;
-  assert.equal(checkout.can("next"), true);
+  assert.equal(can(checkout, "next").get(), true);
   assert.equal(checkout.store.canNext, true);
 
   checkout.next();
@@ -509,17 +849,17 @@ test("guarded events explain blocked and allowed outcomes with receiver helpers"
           label: "Submit order"
         }
       ),
-      inspect(store, input) {
+      audit(store, input) {
         return [
-          this.can("submit", input),
+          can(this, "submit", input).get(),
           this.explain("submit", input).reason,
-          this.describe().handlers
+          inspect(this).handlers
         ];
       }
     }
   });
 
-  assert.equal(checkout.can("submit", { confirm: false }), false);
+  assert.equal(can(checkout, "submit", { confirm: false }).get(), false);
   assert.equal(checkout.store.canSubmit, false);
   assert.deepEqual(checkout.explain("submit", { confirm: false }), {
     event: "submit",
@@ -531,13 +871,13 @@ test("guarded events explain blocked and allowed outcomes with receiver helpers"
     label: "Submit order"
   });
   assert.equal(checkout.store.canSubmitNow, false);
-  assert.deepEqual(checkout.inspect({ confirm: false }), [
+  assert.deepEqual(checkout.audit({ confirm: false }), [
     false,
     "cannot_submit",
-    ["submit", "inspect"]
+    ["submit", "audit"]
   ]);
 
-  assert.equal(checkout.can("submit", { confirm: true }), true);
+  assert.equal(can(checkout, "submit", { confirm: true }).get(), true);
   assert.deepEqual(checkout.explain("submit", { confirm: true }), {
     event: "submit",
     allowed: true,
@@ -551,3 +891,21 @@ test("guarded events explain blocked and allowed outcomes with receiver helpers"
   checkout.submit({ confirm: true });
   assert.equal(checkout.store.step, "submitted");
 });
+
+function replaceGlobal(name, value) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    writable: true,
+    value
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(globalThis, name, descriptor);
+    } else {
+      delete globalThis[name];
+    }
+  };
+}

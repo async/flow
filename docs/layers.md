@@ -120,7 +120,8 @@ Choose L2 when:
 - Subscribers should see batched handler changes.
 - Handlers need `this.dispatch(...)`, `this.after(...)`, internal controllers,
   or injected runtime context.
-- UI controls or adapters need `can(...)`, `explain(...)`, or `describe()`
+- UI controls or adapters need imported `can(...)`, `explain(...)`, or
+  `inspect(...)`
   without dispatching events.
 
 ## L2.5: Composition And Parallel Effects

@@ -231,7 +231,7 @@ test("lazy async signals read as values in store and expose controllers through 
   });
 
   assert.equal(greetingFlow.store.greeting, undefined);
-  assert.equal(greetingFlow.refs.greeting.kind, "asyncSignal");
+  assert.equal(greetingFlow.refs.greeting.type, "asyncSignal");
   assert.equal(greetingFlow.asyncSignals.greeting, greetingFlow.refs.greeting);
   assert.equal(await greetingFlow.fetch(), "Hello World");
   assert.equal(greetingFlow.store.greeting, "Hello World");

@@ -60,17 +60,20 @@ status values, async signals, or plain writable values.
 
 ## Status Values
 
-`status(initial, allowed?)` is a writable signal with optional allowed-value
-validation and a public status brand.
+`status(initial, allowed?)` creates a writable signal with optional
+allowed-value validation and a public status brand. It works on its own or as a
+store declaration.
 
 ```js
 import { createStore, status } from "@async/flow";
 
-const order = createStore({
-  step: status("shipping", ["shipping", "payment", "review"])
-});
+const step = status("shipping", ["shipping", "payment", "review"]);
 
-order.store.step = "payment";
+step.set("payment");
+step.get(); // "payment"
+
+const order = createStore({ step });
+
 order.store.step; // "payment"
 ```
 
@@ -93,7 +96,7 @@ const greeting = createAsyncSignal(async function (input) {
 
 await greeting.load({ name: "World" });
 
-greeting.kind; // "asyncSignal"
+greeting.type; // "asyncSignal"
 greeting.value; // loaded text
 greeting.status; // "ready"
 ```

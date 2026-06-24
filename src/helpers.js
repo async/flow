@@ -1,14 +1,23 @@
-import { defineComputed, defineStatus, isComputedDefinition, isPlainObject } from "./define.js";
+import { COMPUTED, SIGNAL, STATUS, defineComputed, isComputedDefinition, isPlainObject } from "./define.js";
+import { FLOW_INSPECT, FLOW_INSTANCE, createComputed as createLiveComputed, createStatus } from "./runtime.js";
 import { createComposeStop, isPromiseLike } from "./compose.js";
 
 export const TRANSITION = Symbol.for("@async/flow.transition");
 export const GUARD = Symbol.for("@async/flow.guard");
 export const AVAILABILITY = Symbol.for("@async/flow.availability");
+export const STANDALONE_TRANSITION = Symbol.for("@async/flow.standaloneTransition");
+export const STANDALONE_AFTER = Symbol.for("@async/flow.standaloneAfter");
+export const STANDALONE_DISPATCH = Symbol.for("@async/flow.standaloneDispatch");
 
-export const status = defineStatus;
+export const status = createStatus;
 
 export function set(nameOrUpdates, maybeValue) {
   return function setStep(store, input, previous) {
+    if (isWritableSignalLike(nameOrUpdates) || isWritableStatusLike(nameOrUpdates)) {
+      nameOrUpdates.set(resolveStepValue(maybeValue, this, store, input, previous));
+      return undefined;
+    }
+
     const updates =
       typeof nameOrUpdates === "string"
         ? { [nameOrUpdates]: maybeValue }
@@ -24,17 +33,22 @@ export function set(nameOrUpdates, maybeValue) {
   };
 }
 
-export function dispatch(eventName, input) {
-  assertEventName(eventName, "dispatch");
+export function dispatch(targetOrEventName, eventNameOrPayload, maybePayload) {
+  if (typeof targetOrEventName === "string") {
+    return createStandaloneDispatch(targetOrEventName, eventNameOrPayload, arguments.length >= 2);
+  }
 
-  return function dispatchStep(store, currentInput, previous) {
-    assertFlowDispatchReceiver(this, "dispatch");
-    return this.dispatch(eventName, resolveOptionalStepValue(input, this, store, currentInput, previous));
-  };
+  assertEventName(eventNameOrPayload, "dispatch");
+  return dispatchToTarget(targetOrEventName, eventNameOrPayload, maybePayload);
 }
 
 export function after(ms, eventName, input) {
   assertDelay(ms, "after");
+
+  if (typeof eventName === "function") {
+    return createStandaloneAfter(ms, eventName, input);
+  }
+
   assertEventName(eventName, "after");
 
   return function afterStep(store, currentInput, previous) {
@@ -45,6 +59,17 @@ export function after(ms, eventName, input) {
 }
 
 export function update(name, fn) {
+  if (isWritableSignalLike(name) || isWritableStatusLike(name)) {
+    if (typeof fn !== "function") {
+      throw new TypeError("update(...) requires an updater function.");
+    }
+
+    return function updateRefStep(store, input, previous) {
+      name.set(fn(name.get(), store, input, previous));
+      return undefined;
+    };
+  }
+
   if (typeof name !== "string" || name.length === 0) {
     throw new TypeError("update(...) requires a store value name.");
   }
@@ -62,6 +87,10 @@ export function update(name, fn) {
 export function bool(condition) {
   assertCondition(condition, "bool");
 
+  if (isStandaloneBooleanCondition(condition)) {
+    return createLiveComputed(() => Boolean(resolveStandaloneCondition(condition)));
+  }
+
   return defineComputed({ arguments: (store) => [store] }, function (store) {
     return Boolean(resolveCondition(condition, this, store, undefined, undefined, "bool"));
   });
@@ -69,6 +98,12 @@ export function bool(condition) {
 
 export function every(...conditions) {
   assertConditionList(conditions, "every");
+
+  if (conditions.every(isStandaloneBooleanCondition)) {
+    return createLiveComputed(() =>
+      conditions.every((condition) => Boolean(resolveStandaloneCondition(condition)))
+    );
+  }
 
   return defineComputed({ arguments: (store) => [store] }, function (store) {
     return conditions.every((condition) =>
@@ -80,6 +115,12 @@ export function every(...conditions) {
 export function some(...conditions) {
   assertConditionList(conditions, "some");
 
+  if (conditions.every(isStandaloneBooleanCondition)) {
+    return createLiveComputed(() =>
+      conditions.some((condition) => Boolean(resolveStandaloneCondition(condition)))
+    );
+  }
+
   return defineComputed({ arguments: (store) => [store] }, function (store) {
     return conditions.some((condition) =>
       Boolean(resolveCondition(condition, this, store, undefined, undefined, "some"))
@@ -89,6 +130,10 @@ export function some(...conditions) {
 
 export function not(condition) {
   assertCondition(condition, "not");
+
+  if (isStandaloneBooleanCondition(condition)) {
+    return createLiveComputed(() => !Boolean(resolveStandaloneCondition(condition)));
+  }
 
   return defineComputed({ arguments: (store) => [store] }, function (store) {
     return !Boolean(resolveCondition(condition, this, store, undefined, undefined, "not"));
@@ -186,66 +231,129 @@ export function guard(predicate, handler, options) {
   return guardStep;
 }
 
-export function transition(statusName, config) {
-  assertStatusName(statusName, "transition");
+export function transition(statusTarget, config) {
+  assertStatusTarget(statusTarget, "transition");
   const rules = normalizeTransitionRules(config);
 
   const transitionStep = function transitionStep(store, input, previous) {
-    const name = resolveStatusName(this, statusName);
-    const current = store[name];
-    const rule = rules.find((entry) => transitionRuleMatches(entry, current, this, store, input, previous));
+    const target = resolveTransitionTarget(this, store, statusTarget);
+    const targetStore = target.store ?? store;
+    const current = target.get();
+    const rule = rules.find((entry) => transitionRuleMatches(entry, current, this, targetStore, input, previous));
 
     if (!rule) {
       return undefined;
     }
 
-    store[name] = typeof rule.to === "function"
-      ? rule.to.call(this, store, input, previous)
-      : rule.to;
+    target.set(typeof rule.to === "function"
+      ? rule.to.call(this, targetStore, input, previous)
+      : rule.to);
     return undefined;
   };
 
-  Object.defineProperty(transitionStep, TRANSITION, {
-    configurable: true,
-    value: {
-      status: statusName,
-      rules
-    }
-  });
+  if (typeof statusTarget === "string") {
+    Object.defineProperty(transitionStep, TRANSITION, {
+      configurable: true,
+      value: {
+        status: statusTarget,
+        rules
+      }
+    });
+  } else {
+    Object.defineProperty(transitionStep, STANDALONE_TRANSITION, {
+      configurable: true,
+      value: {
+        target: statusTarget,
+        rules
+      }
+    });
+  }
 
   return transitionStep;
 }
 
-export function can(statusNameOrEventName, eventName) {
+export function can(statusNameOrFlowOrEventName, eventName, input) {
+  if (isStandaloneTransition(statusNameOrFlowOrEventName)) {
+    return createLiveComputed(() => canRunStandaloneTransition(statusNameOrFlowOrEventName, eventName));
+  }
+
+  if (isFlowLike(statusNameOrFlowOrEventName)) {
+    assertEventName(eventName, "can");
+    return createLiveComputed(() => Boolean(statusNameOrFlowOrEventName.explain(eventName, input)?.allowed));
+  }
+
   if (arguments.length === 1) {
-    assertEventName(statusNameOrEventName, "can");
+    assertEventName(statusNameOrFlowOrEventName, "can");
     return defineComputed({ arguments: (store) => [store] }, function (store) {
-      return Boolean(this.explain?.(statusNameOrEventName, undefined, store)?.allowed);
+      return Boolean(this.explain?.(statusNameOrFlowOrEventName, undefined, store)?.allowed);
     });
   }
 
-  assertStatusName(statusNameOrEventName, "can");
+  assertStatusName(statusNameOrFlowOrEventName, "can");
   if (typeof eventName !== "string" || eventName.length === 0) {
     throw new TypeError("can(...) requires an event name.");
   }
 
   return defineComputed({ arguments: (store) => [store] }, function (store) {
     const explanation = this.explain?.(eventName, undefined, store, {
-      statusName: statusNameOrEventName
+      statusName: statusNameOrFlowOrEventName
     });
 
     return Boolean(explanation?.allowed);
   });
 }
 
-export function matches(statusName, value) {
-  assertStatusName(statusName, "matches");
+export function matches(statusNameOrRef, value) {
+  if (isSignalLike(statusNameOrRef) || isStatusLike(statusNameOrRef)) {
+    return createLiveComputed(() => valueMatches(statusNameOrRef.get(), value));
+  }
+
+  assertStatusName(statusNameOrRef, "matches");
   return defineComputed({ arguments: (store) => [store] }, function (store) {
-    const current = store[resolveStatusName(this, statusName)];
-    return Array.isArray(value)
-      ? value.some((entry) => Object.is(current, entry))
-      : Object.is(current, value);
+    const current = store[resolveStatusName(this, statusNameOrRef)];
+    return valueMatches(current, value);
   });
+}
+
+export function inspect(target) {
+  if (isFlowLike(target) && typeof target[FLOW_INSPECT] === "function") {
+    return target[FLOW_INSPECT]();
+  }
+
+  if (isStandaloneDispatch(target)) {
+    return inspectStandaloneDispatch(target);
+  }
+
+  if (isStandaloneAfter(target)) {
+    return inspectStandaloneAfter(target);
+  }
+
+  if (isStandaloneTransition(target)) {
+    return inspectStandaloneTransition(target);
+  }
+
+  if (typeof target === "function" && target[TRANSITION]) {
+    return inspectNamedTransition(target);
+  }
+
+  if (isStatusLike(target)) {
+    return inspectRef(target, "status");
+  }
+
+  if (isSignalLike(target)) {
+    return inspectRef(target, "signal");
+  }
+
+  if (isComputedLike(target)) {
+    return {
+      type: "computed",
+      value: cloneInspectable(target.get())
+    };
+  }
+
+  throw new TypeError(
+    "inspect(...) requires a Flow instance, status ref, signal ref, computed ref, dispatch helper, transition helper, or timer helper."
+  );
 }
 
 function createConditionPredicate(condition, helperName) {
@@ -265,6 +373,14 @@ function resolveCondition(condition, receiver, store, input, previous, helperNam
     const args = resolveConditionArguments(condition.options?.arguments, store, helperName);
     const conditionReceiver = createConditionReceiver(receiver);
     return condition.compute.apply(conditionReceiver, args);
+  }
+
+  if (isComputedLike(condition)) {
+    return condition.get();
+  }
+
+  if (isSignalLike(condition) || isStatusLike(condition)) {
+    return condition.get();
   }
 
   throw new TypeError(`${helperName}(...) requires a boolean condition.`);
@@ -307,7 +423,13 @@ function assertConditionList(conditions, helperName) {
 }
 
 function assertCondition(condition, helperName) {
-  if (typeof condition === "function" || isComputedDefinition(condition)) {
+  if (
+    typeof condition === "function" ||
+    isComputedDefinition(condition) ||
+    isComputedLike(condition) ||
+    isSignalLike(condition) ||
+    isStatusLike(condition)
+  ) {
     return;
   }
 
@@ -320,10 +442,387 @@ function assertStatusName(value, helperName) {
   }
 }
 
+function assertStatusTarget(value, helperName) {
+  if ((typeof value === "string" && value.length > 0) || isWritableSignalLike(value) || isWritableStatusLike(value)) {
+    return;
+  }
+
+  throw new TypeError(`${helperName}(...) requires a status name or signal ref.`);
+}
+
+function createStandaloneDispatch(eventName, configuredPayload, hasConfiguredPayload) {
+  assertEventName(eventName, "dispatch");
+  const metadata = {
+    event: eventName,
+    payload: hasConfiguredPayload
+  };
+  const dispatchStep = function standaloneDispatchStep() {};
+
+  return new Proxy(dispatchStep, {
+    apply(_target, thisArg, args) {
+      const hasComposeArguments = args.length >= 2;
+      const hasOverridePayload = !hasComposeArguments && args.length >= 1;
+      const payload = hasOverridePayload ? args[0] : configuredPayload;
+      const resolvedPayload = resolveDeferredDispatchPayload(
+        payload,
+        thisArg,
+        hasComposeArguments ? args[0] : undefined,
+        hasComposeArguments ? args[1] : undefined,
+        hasComposeArguments ? args[2] : undefined
+      );
+
+      return dispatchToTarget(thisArg, eventName, resolvedPayload);
+    },
+
+    get(target, prop, receiver) {
+      if (prop === STANDALONE_DISPATCH) {
+        return metadata;
+      }
+
+      if (prop === "send" || prop === "emit") {
+        return function dispatchFromTarget(targetObject, overridePayload) {
+          const payload = arguments.length >= 2 ? overridePayload : configuredPayload;
+          return dispatchToTarget(
+            targetObject,
+            eventName,
+            resolveDeferredDispatchPayload(payload, targetObject, undefined, undefined, undefined)
+          );
+        };
+      }
+
+      return Reflect.get(target, prop, receiver);
+    }
+  });
+}
+
+function dispatchToTarget(target, eventName, payload) {
+  if (isFlowDispatchTarget(target)) {
+    return target.dispatch(eventName, payload);
+  }
+
+  if (isDomDispatchTarget(target)) {
+    return dispatchDomEvent(target, eventName, payload);
+  }
+
+  if (isEmitterTarget(target)) {
+    return target.emit(eventName, payload);
+  }
+
+  if (isSenderTarget(target)) {
+    return target.send(eventName, payload);
+  }
+
+  return false;
+}
+
+function dispatchDomEvent(target, eventName, payload) {
+  const EventConstructor = globalThis.Event;
+  const CustomEventConstructor = globalThis.CustomEvent;
+
+  if (payload === undefined) {
+    if (typeof EventConstructor !== "function") {
+      return false;
+    }
+
+    return dispatchDomEventObject(
+      target,
+      new EventConstructor(eventName, {
+        bubbles: true,
+        composed: true
+      })
+    );
+  }
+
+  if (typeof CustomEventConstructor !== "function") {
+    return false;
+  }
+
+  return dispatchDomEventObject(
+    target,
+    new CustomEventConstructor(eventName, {
+      bubbles: true,
+      composed: true,
+      detail: payload
+    })
+  );
+}
+
+function dispatchDomEventObject(target, event) {
+  Object.defineProperty(event, STANDALONE_DISPATCH, {
+    configurable: true,
+    value: true
+  });
+
+  return target.dispatchEvent(event);
+}
+
+function resolveDeferredDispatchPayload(payload, receiver, store, input, previous) {
+  return typeof payload === "function"
+    ? payload.call(receiver, store, input, previous)
+    : payload;
+}
+
+function createStandaloneAfter(ms, task, configuredInput) {
+  const afterStep = function standaloneAfterStep(input) {
+    const scheduledInput = configuredInput === undefined ? input : configuredInput;
+    const timeout = setTimeout(() => {
+      task.call(this, scheduledInput);
+    }, ms);
+
+    return () => clearTimeout(timeout);
+  };
+
+  Object.defineProperty(afterStep, STANDALONE_AFTER, {
+    configurable: true,
+    value: {
+      ms
+    }
+  });
+
+  return afterStep;
+}
+
 function assertEventName(value, helperName) {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${helperName}(...) requires an event name.`);
   }
+}
+
+function valueMatches(current, value) {
+  return Array.isArray(value)
+    ? value.some((entry) => Object.is(current, entry))
+    : Object.is(current, value);
+}
+
+function isFlowLike(value) {
+  return Boolean(value && typeof value === "object" && value[FLOW_INSTANCE] && typeof value.explain === "function");
+}
+
+function isFlowDispatchTarget(value) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    value[FLOW_INSTANCE] &&
+    typeof value.dispatch === "function"
+  );
+}
+
+function isDomDispatchTarget(value) {
+  return Boolean(
+    value &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof value.dispatchEvent === "function"
+  );
+}
+
+function isEmitterTarget(value) {
+  return Boolean(
+    value &&
+    !isStandaloneDispatch(value) &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof value.emit === "function"
+  );
+}
+
+function isSenderTarget(value) {
+  return Boolean(
+    value &&
+    !isStandaloneDispatch(value) &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof value.send === "function"
+  );
+}
+
+function isComputedLike(value) {
+  return Boolean(value && typeof value === "object" && value[COMPUTED] && typeof value.get === "function");
+}
+
+function isSignalLike(value) {
+  return Boolean(value && typeof value === "object" && value[SIGNAL] && typeof value.get === "function");
+}
+
+function isStatusLike(value) {
+  return Boolean(value && typeof value === "object" && value[STATUS] && typeof value.get === "function");
+}
+
+function isStandaloneTransition(value) {
+  return Boolean(typeof value === "function" && value[STANDALONE_TRANSITION]);
+}
+
+function isStandaloneDispatch(value) {
+  return Boolean(typeof value === "function" && value[STANDALONE_DISPATCH]);
+}
+
+function isStandaloneAfter(value) {
+  return Boolean(typeof value === "function" && value[STANDALONE_AFTER]);
+}
+
+function isStandaloneBooleanCondition(value) {
+  return isComputedLike(value) || isSignalLike(value) || isStatusLike(value);
+}
+
+function resolveStandaloneCondition(condition) {
+  return condition.get();
+}
+
+function canRunStandaloneTransition(transitionStep, input) {
+  const metadata = transitionStep[STANDALONE_TRANSITION];
+  const current = metadata.target.get();
+  return metadata.rules.some((rule) =>
+    transitionRuleMatches(rule, current, undefined, undefined, input, undefined)
+  );
+}
+
+function inspectStandaloneTransition(transitionStep) {
+  const metadata = transitionStep[STANDALONE_TRANSITION];
+
+  return {
+    type: "transition",
+    target: inspectRef(metadata.target, isStatusLike(metadata.target) ? "status" : "signal"),
+    rules: metadata.rules.map(inspectTransitionRule)
+  };
+}
+
+function inspectStandaloneDispatch(dispatchStep) {
+  const metadata = dispatchStep[STANDALONE_DISPATCH];
+
+  return {
+    type: "dispatch",
+    event: metadata.event,
+    payload: metadata.payload
+  };
+}
+
+function inspectStandaloneAfter(afterStep) {
+  const metadata = afterStep[STANDALONE_AFTER];
+
+  return {
+    type: "after",
+    ms: metadata.ms
+  };
+}
+
+function inspectNamedTransition(transitionStep) {
+  const metadata = transitionStep[TRANSITION];
+
+  return {
+    type: "transition",
+    status: metadata.status,
+    rules: metadata.rules.map(inspectTransitionRule)
+  };
+}
+
+function inspectRef(ref, type) {
+  const description = {
+    type,
+    value: cloneInspectable(ref.get())
+  };
+
+  if (type === "status" && Array.isArray(ref.allowed)) {
+    description.allowed = cloneInspectable(ref.allowed);
+  }
+
+  return description;
+}
+
+function inspectTransitionRule(rule) {
+  const description = {
+    conditional: typeof rule.when === "function",
+    ...copyPublicMetadata(rule)
+  };
+
+  if (rule.from !== undefined) {
+    description.from = cloneInspectable(rule.from);
+  }
+
+  if (typeof rule.to === "function") {
+    description.dynamic = true;
+  } else {
+    description.to = cloneInspectable(rule.to);
+  }
+
+  return description;
+}
+
+function copyPublicMetadata(source) {
+  const metadata = {};
+
+  if (typeof source?.reason === "string") {
+    metadata.reason = source.reason;
+  }
+
+  if (typeof source?.label === "string") {
+    metadata.label = source.label;
+  }
+
+  return metadata;
+}
+
+function cloneInspectable(value) {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back to a small structural clone for common inspectable values.
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(cloneInspectable);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, entry]) => [name, cloneInspectable(entry)])
+    );
+  }
+
+  return value;
+}
+
+function isWritableSignalLike(value) {
+  return isSignalLike(value) && typeof value.set === "function";
+}
+
+function isWritableStatusLike(value) {
+  return isStatusLike(value) && typeof value.set === "function";
+}
+
+function resolveTransitionTarget(receiver, store, statusTarget) {
+  if (isWritableSignalLike(statusTarget) || isWritableStatusLike(statusTarget)) {
+    return {
+      get: () => statusTarget.get(),
+      set: (value) => statusTarget.set(value),
+      store
+    };
+  }
+
+  const name = resolveStatusName(receiver, statusTarget);
+  const targetStore = resolveTransitionStore(receiver, store);
+
+  return {
+    get: () => targetStore[name],
+    set: (value) => {
+      targetStore[name] = value;
+    },
+    store: targetStore
+  };
+}
+
+function resolveTransitionStore(receiver, store) {
+  if (store && typeof store === "object") {
+    return store;
+  }
+
+  if (isFlowLike(receiver) && receiver.store && typeof receiver.store === "object") {
+    return receiver.store;
+  }
+
+  throw new TypeError("transition(...) requires a store object when used with a status name.");
 }
 
 function assertDelay(value, helperName) {
@@ -332,14 +831,8 @@ function assertDelay(value, helperName) {
   }
 }
 
-function assertFlowDispatchReceiver(receiver, helperName) {
-  if (!receiver || typeof receiver.dispatch !== "function") {
-    throw new TypeError(`${helperName}(...) requires a Flow handler receiver.`);
-  }
-}
-
 function assertFlowAfterReceiver(receiver, helperName) {
-  if (!receiver || typeof receiver.after !== "function") {
+  if (!isFlowLike(receiver) || typeof receiver.after !== "function") {
     throw new TypeError(`${helperName}(...) requires a Flow handler receiver.`);
   }
 }
@@ -492,12 +985,23 @@ function resolveStatusName(source, requested) {
     return requested;
   }
 
-  const statuses = source?._describe?.().statuses ?? source?.describe?.().statuses ?? [];
+  const statuses = statusNamesFromInspection(source);
   if (statuses.length === 1) {
     return statuses[0];
   }
 
   throw new Error("Strict Flow helpers require a single status value or an explicit status option.");
+}
+
+function statusNamesFromInspection(source) {
+  const description = typeof source?.[FLOW_INSPECT] === "function" ? source[FLOW_INSPECT]() : undefined;
+  if (!description?.store || typeof description.store !== "object") {
+    return [];
+  }
+
+  return Object.entries(description.store)
+    .filter(([, entry]) => entry?.type === "status")
+    .map(([name]) => name);
 }
 
 function copyFlowMetadata(source, target) {
@@ -521,6 +1025,7 @@ function copyFlowMetadata(source, target) {
       value: source[AVAILABILITY]
     });
   }
+
 }
 
 function normalizeAvailabilityOptions(options, helperName) {

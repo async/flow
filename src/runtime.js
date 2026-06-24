@@ -4,6 +4,7 @@ import {
   ASYNC_SIGNAL_IMMEDIATE,
   SIGNAL,
   STATUS,
+  defineStatus,
   defineFlow,
   isComputedDefinition,
   isFlowDefinition,
@@ -18,6 +19,7 @@ import { resolveScheduler } from "./scheduler.js";
 const TRANSITION = Symbol.for("@async/flow.transition");
 const GUARD = Symbol.for("@async/flow.guard");
 export const FLOW_INSTANCE = Symbol.for("@async/flow.instance");
+export const FLOW_INSPECT = Symbol.for("@async/flow.inspect");
 
 const RESERVED_INSTANCE_NAMES = new Set([
   "_",
@@ -26,8 +28,6 @@ const RESERVED_INSTANCE_NAMES = new Set([
   "update",
   "subscribe",
   "dispatch",
-  "can",
-  "describe",
   "explain",
   "snapshot",
   "restore",
@@ -48,7 +48,7 @@ export function createSignal(initial, options = {}) {
 
   const ref = {
     [SIGNAL]: true,
-    kind: "signal",
+    type: "signal",
 
     get value() {
       return ref.get();
@@ -120,8 +120,9 @@ export function createSignal(initial, options = {}) {
 }
 
 export function createStatus(initial, allowed, options = {}) {
-  const allowedValues = allowed === undefined ? undefined : [...allowed];
-  const ref = createSignal(initial, options);
+  const definition = defineStatus(initial, allowed);
+  const allowedValues = definition.allowed;
+  const ref = createSignal(definition.initial, options);
   const setSignalValue = ref.set;
 
   Object.defineProperty(ref, STATUS, {
@@ -130,7 +131,7 @@ export function createStatus(initial, allowed, options = {}) {
     value: true
   });
 
-  ref.kind = "status";
+  ref.type = "status";
   ref.allowed = allowedValues;
   ref.set = (next) => {
     if (allowedValues !== undefined) {
@@ -170,7 +171,7 @@ export function createComputed(optionsOrCompute, maybeCompute, maybeRuntimeOptio
 
   const ref = {
     [COMPUTED]: true,
-    kind: "computed",
+    type: "computed",
 
     get value() {
       return ref.get();
@@ -272,7 +273,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
 
   const asyncSignalRef = {
     [ASYNC_SIGNAL]: true,
-    kind: "asyncSignal",
+    type: "asyncSignal",
 
     get value() {
       return asyncSignalRef.get();
@@ -665,19 +666,10 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   }
 
-  const declaredStatusNames = Object.entries(Object.getOwnPropertyDescriptors(definition.store))
-    .filter(([, descriptor]) => "value" in descriptor && isStatusDefinition(descriptor.value))
-    .map(([name]) => name);
-
   const storeState = createStore(definition.store, {
     scheduler,
     rejectPlainObjects: true,
     context: {
-      describe: () => ({
-        statuses: declaredStatusNames,
-        transitions: Object.fromEntries(transitionMetadata),
-        handlers: Object.keys(definition.on)
-      }),
       explain: (eventName, input, storeOverride, options) =>
         explainEvent(eventName, input, storeOverride, options),
       transition: (eventName) => transitionMetadata.get(eventName)
@@ -759,16 +751,8 @@ export function createFlow(definitionOrConfig, options = {}) {
       return result;
     },
 
-    can(eventName, input) {
-      return flow.explain(eventName, input).allowed;
-    },
-
     explain(eventName, input) {
       return explainEvent(eventName, input);
-    },
-
-    describe() {
-      return describeFlow();
     },
 
     snapshot() {
@@ -792,18 +776,6 @@ export function createFlow(definitionOrConfig, options = {}) {
       }
 
       wholeSubscribers.clear();
-    },
-
-    _describe() {
-      return {
-        writable: [...writableNames],
-        statuses: [...statusNames],
-        transitions: Object.fromEntries(transitionMetadata),
-        guards: Object.fromEntries(guardMetadata),
-        store: Object.keys(refs),
-        asyncSignals: Object.keys(asyncSignals),
-        handlers: Object.keys(handlers)
-      };
     }
   };
 
@@ -818,6 +790,13 @@ export function createFlow(definitionOrConfig, options = {}) {
     configurable: false,
     enumerable: false,
     value: true,
+    writable: false
+  });
+
+  Object.defineProperty(flow, FLOW_INSPECT, {
+    configurable: false,
+    enumerable: false,
+    value: describeFlow,
     writable: false
   });
 
@@ -880,17 +859,16 @@ export function createFlow(definitionOrConfig, options = {}) {
 
   function createHandlerReceiver(name, input) {
     const receiver = {
+      [FLOW_INSTANCE]: true,
+      [FLOW_INSPECT]: describeFlow,
       store,
       refs,
       asyncSignals,
       dispatch: flow.dispatch.bind(flow),
-      can: flow.can.bind(flow),
       explain: flow.explain.bind(flow),
-      describe: flow.describe.bind(flow),
       [COMPOSE_BATCH](fn) {
         return runFlowBatch(name, input, fn);
       },
-      _describe: flow._describe.bind(flow),
       after(ms, eventName, nextInput) {
         if (!Number.isFinite(ms) || ms < 0) {
           throw new TypeError("after(...) requires a non-negative millisecond delay.");
@@ -945,7 +923,7 @@ export function createFlow(definitionOrConfig, options = {}) {
 
     for (const [name, ref] of Object.entries(refs)) {
       const entry = {
-        kind: ref.kind,
+        type: ref.type,
         writable: writableNames.has(name),
         value: cloneInspectable(store[name])
       };
@@ -965,7 +943,7 @@ export function createFlow(definitionOrConfig, options = {}) {
 
     for (const [name, asyncSignalRef] of Object.entries(asyncSignals)) {
       description[name] = {
-        kind: "asyncSignal",
+        type: "asyncSignal",
         status: asyncSignalRef.status,
         loading: asyncSignalRef.loading,
         ready: asyncSignalRef.ready,
@@ -1081,6 +1059,8 @@ export function createFlow(definitionOrConfig, options = {}) {
 
   function createReadonlyFlowReceiver(readonlyStore) {
     return {
+      [FLOW_INSTANCE]: true,
+      [FLOW_INSPECT]: describeFlow,
       store: readonlyStore,
       get refs() {
         return refs;
@@ -1088,20 +1068,8 @@ export function createFlow(definitionOrConfig, options = {}) {
       get asyncSignals() {
         return asyncSignals;
       },
-      can(eventName, nextInput) {
-        return explainEvent(eventName, nextInput, readonlyStore).allowed;
-      },
       explain(eventName, nextInput, nextStore = readonlyStore, nextOptions = {}) {
         return explainEvent(eventName, nextInput, nextStore, nextOptions);
-      },
-      describe: describeFlow,
-      _describe() {
-        return flow?._describe?.() ?? {
-          statuses: [...declaredStatusNames],
-          transitions: Object.fromEntries(transitionMetadata),
-          guards: Object.fromEntries(guardMetadata),
-          handlers: Object.keys(definition.on)
-        };
       }
     };
   }
@@ -1255,8 +1223,19 @@ function createWritableRefForDeclaration(name, declaration, scheduler) {
     });
   }
 
+  if (isStatusLike(declaration)) {
+    return createStatus(declaration.get(), declaration.allowed, {
+      name,
+      scheduler
+    });
+  }
+
   if (isSignalDefinition(declaration)) {
     return createSignal(declaration.initial, { scheduler });
+  }
+
+  if (isSignalLike(declaration)) {
+    return createSignal(declaration.get(), { scheduler });
   }
 
   return createSignal(declaration, { scheduler });
@@ -1515,7 +1494,22 @@ function isComputedDeclaration(value) {
 }
 
 function isBrandedStoreEntry(value) {
-  return isSignalDefinition(value) || isStatusDefinition(value) || isComputedDefinition(value) || isAsyncSignalLike(value);
+  return (
+    isSignalDefinition(value) ||
+    isSignalLike(value) ||
+    isStatusDefinition(value) ||
+    isStatusLike(value) ||
+    isComputedDefinition(value) ||
+    isAsyncSignalLike(value)
+  );
+}
+
+function isSignalLike(value) {
+  return Boolean(value && typeof value === "object" && value[SIGNAL]);
+}
+
+function isStatusLike(value) {
+  return Boolean(value && typeof value === "object" && value[STATUS]);
 }
 
 function isAsyncSignalLike(value) {

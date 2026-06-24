@@ -7,10 +7,12 @@ import {
   after,
   bool,
   branch,
+  can,
   compose,
   dispatch,
   every,
   flow,
+  inspect,
   matches,
   not,
   parallel,
@@ -160,11 +162,34 @@ Only leading availability gates are lifted into `can(...)` and `explain(...)`.
 Later gates run at dispatch time only, because earlier steps may mutate the
 store before they are evaluated.
 
-`dispatch(eventName, input?)` forwards to another Flow event. `input` may be a
-plain value or a function that receives `(store, input, previous)`.
+`dispatch(eventName, payload?)` creates a reusable deferred sender. When the
+sender is invoked, it dispatches to the invocation target. In composed Flow
+handlers, that target is the current Flow receiver. Function payloads receive
+`(store, input, previous)` when the sender runs as a Flow step.
 
 ```js
 dispatch("finish", (_store, input) => ({ source: input.source }));
+```
+
+Deferred senders can also be reused with other event sinks:
+
+```js
+const ready = dispatch("ready", { id: 1 });
+
+ready.call(checkout);
+ready.call(element);
+ready.emit(emitter);
+ready.send(sender);
+```
+
+Use target-first dispatch for immediate sends:
+
+```js
+dispatch(checkout, "ready", { id: 1 });
+dispatch(this, "ready", { id: 1 });
+dispatch(element, "ready", { id: 1 });
+dispatch(emitter, "ready", { id: 1 });
+dispatch(sender, "ready", { id: 1 });
 ```
 
 `after(ms, eventName, input?)` schedules another Flow event through the current
@@ -172,6 +197,19 @@ Flow receiver.
 
 ```js
 after(5000, "checkJobStatus", (store) => ({ id: store.jobId }));
+```
+
+`after(ms, callback, input?)` creates a standalone cancellable timer helper.
+The callback receives either the input passed when the helper is called or the
+fixed input passed when the helper was created.
+
+```js
+const markReady = after(100, (next) => {
+  phase.set(next);
+}, "ready");
+
+const cancel = markReady();
+cancel();
 ```
 
 `branch(cases)` runs the first matching case. Tuple cases are
@@ -256,7 +294,8 @@ hidden history, rollback, or transaction behavior.
 
 ## Status Helpers
 
-`status(initial, allowed?)` declares a writable finite status value.
+`status(initial, allowed?)` creates a writable finite status signal. It works
+standalone or as a Flow store declaration.
 
 ```js
 const order = flow({
@@ -295,11 +334,79 @@ transition("step", {
 });
 ```
 
+Use a status name when the transition belongs to a Flow store; that keeps
+`can(...)`, `explain(...)`, and `inspect(...)` tied to public store metadata.
+Use live status refs when the helpers are standing alone:
+
+```js
+const phase = status("idle", ["idle", "dragging", "dropped"]);
+
+const startDragging = transition(phase, {
+  idle: "dragging"
+});
+
+const drop = transition(phase, {
+  dragging: "dropped"
+});
+
+const canStartDragging = can(startDragging);
+const canDrop = can(drop);
+const isDragging = matches(phase, "dragging");
+const dropReady = every(isDragging, canDrop);
+
+canStartDragging.get(); // true
+canDrop.get(); // false
+isDragging.get(); // false
+dropReady.get(); // false
+
+startDragging();
+
+phase.get(); // "dragging"
+canStartDragging.get(); // false
+canDrop.get(); // true
+isDragging.get(); // true
+dropReady.get(); // true
+
+drop();
+
+phase.get(); // "dropped"
+canDrop.get(); // false
+```
+
+`set(statusRef, value)`, `update(statusRef, fn)`, `bool(ref)`,
+`every(ref, ...)`, `some(ref, ...)`, and `not(ref)` also work directly with live
+refs. Use store names when a helper should integrate with Flow inspection; use
+refs when the helper should stand alone.
+
+Use `inspect(...)` for standalone helper metadata and Flow inspection:
+
+```js
+inspect(phase);
+// { type: "status", value: "dropped", allowed: ["idle", "dragging", "dropped"] }
+
+inspect(startDragging);
+// {
+//   type: "transition",
+//   target: {
+//     type: "status",
+//     value: "dropped",
+//     allowed: ["idle", "dragging", "dropped"]
+//   },
+//   rules: [{ conditional: false, from: "idle", to: "dragging" }]
+// }
+```
+
 `can(statusName, eventName)` computes whether a transition handler can move
 from the current status.
 
 `can(eventName)` computes whether an event is available now. It infers the
 status metadata from the event instead of repeating the status name.
+
+`can(flow, eventName, input?)` returns a standalone computed ref that follows a
+Flow instance's event availability.
+
+`can(transitionStep, input?)` returns a standalone computed ref for a
+`transition(statusRef, rules)` helper.
 
 ```js
 const checkout = flow({
@@ -317,10 +424,17 @@ const checkout = flow({
 ```
 
 `matches(statusName, value)` computes whether the current status matches a
-value. The value may also be an array.
+value. `matches(statusRef, value)` returns a standalone computed ref for a live
+status signal. The value may also be an array.
 
 ```js
 const dragging = matches("phase", ["dragging", "overTarget"]);
+
+const phase = status("idle", ["idle", "dragging"]);
+const isDragging = matches(phase, "dragging");
+
+phase.set("dragging");
+isDragging.get(); // true
 ```
 
 `bool(condition)` coerces one condition to a computed boolean. `every(...)`,
@@ -361,15 +475,15 @@ receive `(store, input, previous)`, matching composed handler steps.
 
 `guard(predicate, handler)` skips the handler when the predicate is false.
 
-`flow.can(eventName, input?)` and receiver `this.can(eventName, input?)` return
-the same event availability boolean without dispatching the event. Availability
-uses Flow-visible transition metadata, guard metadata, and explicit leading
-`when(..., { availability: true })` gates. Plain composed handlers remain
-callable unless they publish availability metadata.
+Imported `can(flow, eventName, input?)` returns a computed event availability
+ref without dispatching the event. Availability uses Flow-visible transition
+metadata, guard metadata, and explicit leading `when(..., { availability: true })`
+gates. Plain composed handlers remain callable unless they publish availability
+metadata.
 
 ```js
-checkout.can("next"); // true
-checkout.can("submit", { confirm: true });
+can(checkout, "next").get(); // true
+can(checkout, "submit", { confirm: true }).get();
 ```
 
 `flow.explain(eventName, input?)` and receiver
@@ -412,24 +526,32 @@ guard(
 );
 ```
 
-`flow.describe()` and receiver `this.describe()` return public inspection data
-for store entries, handlers, transitions, and guards. Availability gates lifted
-from composed handlers appear as guard metadata.
+Imported `inspect(flow)` returns public inspection data for store entries,
+handlers, transitions, and guards. Availability gates lifted from composed
+handlers appear as guard metadata.
 
 ```js
-const description = checkout.describe();
+const description = inspect(checkout);
 
 description.handlers; // ["next", "submit"]
-description.store.step.kind; // "status"
+description.store.step.type; // "status"
 description.transitions.next.status; // "step"
 ```
 
-Descriptions are fresh snapshots for inspection. They do not expose raw handler
+Inspections are fresh snapshots. They do not expose raw handler
 functions, guard predicates, availability predicates, or transition condition
 functions.
 
-Transition, guard, and availability metadata use public symbols:
+Transition, standalone transition, standalone dispatch, standalone after, guard,
+and availability metadata use public symbols:
 
 ```js
-import { AVAILABILITY, GUARD, TRANSITION } from "@async/flow";
+import {
+  AVAILABILITY,
+  GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
+  TRANSITION
+} from "@async/flow";
 ```

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  can,
   computed,
+  defineStatus,
   defineFlow,
+  FLOW_INSPECT,
   FLOW_INSTANCE,
   flow,
   guard,
+  inspect,
   asyncSignal,
+  SIGNAL,
   signal,
   status,
   STATUS,
@@ -38,13 +43,37 @@ test("createSignal exposes get value set update subscribe and snapshot", () => {
   assert.deepEqual(values, [1, 2]);
 });
 
-test("createStatus validates allowed values and carries the status brand", () => {
-  const phase = createStatus("idle", ["idle", "loading"]);
+test("status declarations are signal-based status definitions", () => {
+  const phase = defineStatus("idle", ["idle", "loading"]);
 
+  assert.equal(phase.type, "async.flow.status");
+  assert.equal(phase.initial, "idle");
+  assert.deepEqual(phase.allowed, ["idle", "loading"]);
+  assert.equal(phase[STATUS], true);
+  assert.equal(phase[SIGNAL], undefined);
+});
+
+test("status creates a standalone signal-based status ref", () => {
+  const phase = status("idle", ["idle", "loading"]);
+
+  assert.equal(phase.type, "status");
+  assert.equal(phase[SIGNAL], true);
   assert.equal(phase[STATUS], true);
   phase.set("loading");
   assert.equal(phase.get(), "loading");
   assert.throws(() => phase.set("done"), /Invalid status value/);
+});
+
+test("createStatus validates allowed values and carries the status brand", () => {
+  const phase = createStatus("idle", ["idle", "loading"]);
+
+  assert.equal(phase[SIGNAL], true);
+  assert.equal(phase[STATUS], true);
+  phase.set("loading");
+  assert.equal(phase.get(), "loading");
+  assert.throws(() => phase.set("done"), /Invalid status value/);
+  assert.throws(() => createStatus("idle", []), /status\(\.\.\.\) allowed values/);
+  assert.throws(() => createStatus("idle", ["loading"]), /status\(\.\.\.\) initial value/);
 });
 
 test("createComputed tracks signal dependencies and notifies when value changes", () => {
@@ -61,6 +90,8 @@ test("createComputed tracks signal dependencies and notifies when value changes"
 });
 
 test("createStore normalizes values and exposes refs behind a store proxy", () => {
+  const sharedPhase = status("idle", ["idle", "ready"]);
+  sharedPhase.set("ready");
   const cart = createStore({
     items: [],
     selectedId: signal(null),
@@ -70,17 +101,23 @@ test("createStore normalizes values and exposes refs behind a store proxy", () =
     isEmpty: computed(function () {
       return this.count === 0;
     }),
-    phase: status("idle", ["idle", "ready"])
+    phase: sharedPhase
+  });
+  const second = createStore({
+    phase: sharedPhase
   });
 
   cart.store.items = [{ id: "sku_123" }];
   cart.store.selectedId = "sku_123";
-  cart.store.phase = "ready";
+  cart.store.phase = "idle";
 
   assert.deepEqual(cart.store.items, [{ id: "sku_123" }]);
   assert.equal(cart.store.count, 1);
   assert.equal(cart.store.isEmpty, false);
   assert.equal(cart.refs.selectedId.get(), "sku_123");
+  assert.equal(cart.store.phase, "idle");
+  assert.equal(second.store.phase, "ready");
+  assert.equal(sharedPhase.get(), "ready");
   assert.equal(cart.refs.phase[STATUS], true);
   assert.throws(() => {
     cart.store.count = 10;
@@ -138,7 +175,9 @@ test("flow projects public store values and hides internal controllers", async (
   const values = [];
 
   assert.equal(greeting[FLOW_INSTANCE], true);
+  assert.equal(typeof greeting[FLOW_INSPECT], "function");
   assert.equal(greeting[Symbol.for("@async/flow.instance")], true);
+  assert.equal(typeof greeting[Symbol.for("@async/flow.inspect")], "function");
   assert.equal(greeting.name, "World");
   greeting.name = "Ada";
   assert.equal(greeting.store.name, "Ada");
@@ -146,7 +185,7 @@ test("flow projects public store values and hides internal controllers", async (
   assert.equal(typeof greeting.subscribe, "function");
   assert.equal(Object.hasOwn(greeting, "_request"), false);
   assert.equal(greeting._._request, greeting.store._request);
-  assert.equal(greeting.store._request.kind, "asyncSignal");
+  assert.equal(greeting.store._request.type, "asyncSignal");
   assert.equal(greeting.status, "idle");
   assert.equal(greeting.value, undefined);
 
@@ -207,6 +246,23 @@ test("flow creates store and separate refs", () => {
     count: 0,
     isEmpty: true
   });
+});
+
+test("flow instances use imported helpers for availability and inspection", () => {
+  const checkout = flow({
+    store: {
+      step: status("shipping", ["shipping", "payment"])
+    },
+    on: {
+      next: transition("step", { shipping: "payment" })
+    }
+  });
+
+  assert.equal(Object.hasOwn(checkout, "can"), false);
+  assert.equal(Object.hasOwn(checkout, "inspect"), false);
+  assert.equal(Object.hasOwn(checkout, "describe"), false);
+  assert.equal(can(checkout, "next").get(), true);
+  assert.equal(inspect(checkout).transitions.next.status, "step");
 });
 
 test("flow instances created from one definition do not share live state", () => {
@@ -331,7 +387,7 @@ test("restore updates writable refs and recomputes computed refs", () => {
   });
 });
 
-test("flow describe returns fresh public store async signal handler transition and guard metadata", () => {
+test("flow inspect returns fresh public store async signal handler transition and guard metadata", () => {
   const checkout = flow({
     store: {
       step: status("shipping", ["shipping", "payment", "review"]),
@@ -360,25 +416,25 @@ test("flow describe returns fresh public store async signal handler transition a
       )
     }
   });
-  const description = checkout.describe();
+  const description = inspect(checkout);
 
   assert.deepEqual(description.handlers, ["next", "submit"]);
   assert.deepEqual(description.store.step, {
-    kind: "status",
+    type: "status",
     writable: true,
     value: "shipping",
     allowed: ["shipping", "payment", "review"]
   });
-  assert.equal(description.store.doubled.kind, "computed");
+  assert.equal(description.store.doubled.type, "computed");
   assert.equal(description.store.doubled.writable, false);
   assert.equal(description.store.doubled.value, 0);
   assert.deepEqual(description.store.user, {
-    kind: "asyncSignal",
+    type: "asyncSignal",
     writable: true,
     value: undefined
   });
   assert.deepEqual(description.asyncSignals.user, {
-    kind: "asyncSignal",
+    type: "asyncSignal",
     status: "idle",
     loading: false,
     ready: false,
@@ -407,7 +463,7 @@ test("flow describe returns fresh public store async signal handler transition a
   description.store.settings.value.currency = "EUR";
   description.store.step.allowed.push("done");
   assert.equal(checkout.store.settings.currency, "USD");
-  assert.deepEqual(checkout.describe().store.step.allowed, ["shipping", "payment", "review"]);
+  assert.deepEqual(inspect(checkout).store.step.allowed, ["shipping", "payment", "review"]);
 });
 
 test("handlers receive store input and receiver capabilities", () => {
@@ -497,6 +553,7 @@ test("root entrypoint exposes the opinionated public surface", async () => {
     "every",
     "flow",
     "guard",
+    "inspect",
     "isAsyncSignal",
     "isAsyncSignalDefinition",
     "isImmediateAsyncSignal",
@@ -520,15 +577,30 @@ test("root entrypoint exposes the opinionated public surface", async () => {
   assert.equal(typeof root.ASYNC_SIGNAL, "symbol");
   assert.equal(typeof root.ASYNC_SIGNAL_IMMEDIATE, "symbol");
   assert.equal(typeof root.AVAILABILITY, "symbol");
+  assert.equal(typeof root.STANDALONE_TRANSITION, "symbol");
+  assert.equal(typeof root.STANDALONE_AFTER, "symbol");
+  assert.equal(typeof root.STANDALONE_DISPATCH, "symbol");
   assert.equal(typeof root.FLOW_INSTANCE, "symbol");
+  assert.equal(typeof root.FLOW_INSPECT, "symbol");
+  assert.equal(root.statusHelper, undefined);
+});
+
+test("define subpath exposes explicit definition names only", async () => {
+  const define = await import("@async/flow/define");
+
+  assert.equal(typeof define.defineStatus, "function");
+  assert.equal(define.status, undefined);
 });
 
 test("helpers subpath exposes boolean condition helpers", async () => {
   const helpers = await import("@async/flow/helpers");
 
-  for (const name of ["bool", "every", "some", "not"]) {
+  for (const name of ["bool", "every", "some", "not", "inspect"]) {
     assert.equal(typeof helpers[name], "function", `${name} should be exported from helpers`);
   }
+  assert.equal(typeof helpers.STANDALONE_TRANSITION, "symbol");
+  assert.equal(typeof helpers.STANDALONE_AFTER, "symbol");
+  assert.equal(typeof helpers.STANDALONE_DISPATCH, "symbol");
 });
 
 test("arrow handlers work when they only need store and input", () => {

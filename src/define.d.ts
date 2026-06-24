@@ -5,18 +5,19 @@ export declare const ASYNC_SIGNAL: unique symbol;
 export declare const ASYNC_SIGNAL_IMMEDIATE: unique symbol;
 
 export type FlowSignalDefinition<T = unknown> = {
-  readonly kind: "async.flow.signal";
+  readonly type: "async.flow.signal";
   readonly initial: T;
 };
 
-export type FlowStatusDefinition<T = unknown> = {
-  readonly kind: "async.flow.status";
+export type FlowStatusDefinition<T = unknown> = Omit<FlowSignalDefinition<T>, "type"> & {
+  readonly [STATUS]?: true;
+  readonly type: "async.flow.status";
   readonly initial: T;
   readonly allowed?: readonly T[];
 };
 
 export type FlowComputedDefinition<T = unknown> = {
-  readonly kind: "async.flow.computed";
+  readonly type: "async.flow.computed";
   readonly options: FlowComputedOptions;
   readonly compute: (this: FlowComputedReceiver, ...args: unknown[]) => T;
 };
@@ -33,20 +34,12 @@ export type FlowAsyncSignalOptions = {
 export type FlowAsyncSignalDefinition<T = unknown, Input = unknown> = {
   readonly [ASYNC_SIGNAL]: true;
   readonly [ASYNC_SIGNAL_IMMEDIATE]?: true;
-  readonly kind: "async.flow.asyncSignal";
+  readonly type: "async.flow.asyncSignal";
   readonly options: FlowAsyncSignalOptions;
   readonly loader: (
     this: FlowAsyncSignalReceiver,
     ...args: Input[]
   ) => T | PromiseLike<T>;
-};
-
-export type FlowDefinitionContext = {
-  describe?(): {
-    statuses?: readonly string[];
-    transitions?: Record<string, unknown>;
-    handlers?: readonly string[];
-  };
 };
 
 export type FlowComputedReceiver = Record<string, unknown> & {
@@ -66,7 +59,7 @@ export type FlowAsyncSignalReceiver = {
 };
 
 export type FlowDefinition = {
-  readonly kind: "async.flow.definition";
+  readonly type: "async.flow.definition";
   readonly store: Record<string, unknown>;
   readonly on: Record<string, Function>;
 };
@@ -101,5 +94,4 @@ export function isImmediateAsyncSignal(value: unknown): boolean;
 export const flow: typeof defineFlow;
 export const signal: typeof defineSignal;
 export const computed: typeof defineComputed;
-export const status: typeof defineStatus;
 export const asyncSignal: typeof defineAsyncSignal;

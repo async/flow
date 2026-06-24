@@ -5,9 +5,10 @@ export type FlowScheduler = {
 };
 
 export declare const FLOW_INSTANCE: unique symbol;
+export declare const FLOW_INSPECT: unique symbol;
 
 export type Signal<T = unknown> = {
-  readonly kind: "signal";
+  readonly type: "signal";
   value: T;
   get(): T;
   set(next: T): T;
@@ -18,12 +19,12 @@ export type Signal<T = unknown> = {
 };
 
 export type Status<T = unknown> = Signal<T> & {
-  readonly kind: "status";
+  readonly type: "status";
   readonly allowed?: readonly T[];
 };
 
 export type Computed<T = unknown> = {
-  readonly kind: "computed";
+  readonly type: "computed";
   readonly value: T;
   get(): T;
   subscribe(fn: (value: T) => void): () => void;
@@ -63,7 +64,7 @@ export type AsyncSignalSnapshot<T = unknown> = {
 };
 
 export type AsyncSignal<T = unknown, Input = unknown> = {
-  readonly kind: "asyncSignal";
+  readonly type: "asyncSignal";
   readonly value: T | undefined;
   readonly status: "idle" | "loading" | "ready" | "error";
   readonly loading: boolean;
@@ -90,14 +91,14 @@ export type FlowChange = {
 };
 
 export type FlowStoreDescriptionEntry = {
-  kind: string;
+  type: string;
   writable: boolean;
   value: unknown;
   allowed?: readonly unknown[];
 };
 
 export type FlowAsyncSignalDescription = {
-  kind: "asyncSignal";
+  type: "asyncSignal";
   status: "idle" | "loading" | "ready" | "error";
   loading: boolean;
   ready: boolean;
@@ -134,13 +135,13 @@ export type FlowEventExplanation = {
 };
 
 export type FlowHandlerReceiver = {
+  readonly [FLOW_INSTANCE]: true;
+  readonly [FLOW_INSPECT]: () => FlowDescription;
   store: Record<string, unknown>;
   refs: Record<string, SignalLike>;
   asyncSignals: Record<string, unknown>;
   dispatch(name: string, input?: unknown): unknown | PromiseLike<unknown>;
-  can(eventName: string, input?: unknown): boolean;
   explain(eventName: string, input?: unknown): FlowEventExplanation;
-  describe(): FlowDescription;
   after(ms: number, eventName: string, input?: unknown): number;
   dispose(cleanup: () => void): () => boolean;
 } & Record<string, unknown>;
@@ -161,6 +162,7 @@ export type StoreInstance = {
 
 export type FlowInstance = {
   readonly [FLOW_INSTANCE]: true;
+  readonly [FLOW_INSPECT]: () => FlowDescription;
   readonly _: Record<string, unknown>;
   readonly store: Record<string, unknown>;
   readonly refs: Record<string, SignalLike>;
@@ -172,9 +174,7 @@ export type FlowInstance = {
   subscribe(name: string, fn: (value: unknown) => void): () => void;
   subscribe(fn: (change: FlowChange) => void): () => void;
   dispatch(name: string, input?: unknown): unknown | PromiseLike<unknown>;
-  can(eventName: string, input?: unknown): boolean;
   explain(eventName: string, input?: unknown): FlowEventExplanation;
-  describe(): FlowDescription;
   snapshot(): Record<string, unknown>;
   restore(snapshot: Record<string, unknown>): void;
   destroy(): void;

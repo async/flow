@@ -12,25 +12,26 @@ export const ASYNC_SIGNAL_IMMEDIATE = Symbol.for("@async/flow.asyncSignal.immedi
 
 export function defineSignal(initial) {
   return {
-    kind: SIGNAL_DEFINITION,
+    type: SIGNAL_DEFINITION,
     initial
   };
 }
 
 export function defineStatus(initial, allowed) {
-  if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0)) {
-    throw new TypeError("status(...) allowed values must be a non-empty array when provided.");
-  }
-
-  if (allowed !== undefined && !allowed.some((value) => Object.is(value, initial))) {
-    throw new Error("status(...) initial value must be present in the allowed values.");
-  }
-
-  return {
-    kind: STATUS_DEFINITION,
-    initial,
-    allowed: allowed === undefined ? undefined : [...allowed]
+  const allowedValues = normalizeStatusAllowed(initial, allowed);
+  const definition = {
+    ...defineSignal(initial),
+    type: STATUS_DEFINITION,
+    allowed: allowedValues
   };
+
+  Object.defineProperty(definition, STATUS, {
+    configurable: false,
+    enumerable: false,
+    value: true
+  });
+
+  return definition;
 }
 
 export function defineComputed(optionsOrCompute, maybeCompute) {
@@ -41,7 +42,7 @@ export function defineComputed(optionsOrCompute, maybeCompute) {
   }
 
   return {
-    kind: COMPUTED_DEFINITION,
+    type: COMPUTED_DEFINITION,
     options,
     compute
   };
@@ -51,7 +52,7 @@ export function defineAsyncSignal(optionsOrLoader, maybeLoader) {
   const { options, loader } = normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader);
   const definition = {
     [ASYNC_SIGNAL]: true,
-    kind: ASYNC_SIGNAL_DEFINITION,
+    type: ASYNC_SIGNAL_DEFINITION,
     options,
     loader
   };
@@ -107,30 +108,30 @@ export function defineFlow(config = {}) {
   Object.defineProperties(normalizedStore, Object.getOwnPropertyDescriptors(store));
 
   return {
-    kind: FLOW_DEFINITION,
+    type: FLOW_DEFINITION,
     store: normalizedStore,
     on: { ...on }
   };
 }
 
 export function isFlowDefinition(value) {
-  return isPlainObject(value) && value.kind === FLOW_DEFINITION;
+  return isPlainObject(value) && value.type === FLOW_DEFINITION;
 }
 
 export function isSignalDefinition(value) {
-  return isPlainObject(value) && value.kind === SIGNAL_DEFINITION;
+  return isPlainObject(value) && value.type === SIGNAL_DEFINITION;
 }
 
 export function isStatusDefinition(value) {
-  return isPlainObject(value) && value.kind === STATUS_DEFINITION;
+  return isPlainObject(value) && value.type === STATUS_DEFINITION;
 }
 
 export function isComputedDefinition(value) {
-  return isPlainObject(value) && value.kind === COMPUTED_DEFINITION;
+  return isPlainObject(value) && value.type === COMPUTED_DEFINITION;
 }
 
 export function isAsyncSignalDefinition(value) {
-  return Boolean(isPlainObject(value) && value.kind === ASYNC_SIGNAL_DEFINITION && value[ASYNC_SIGNAL]);
+  return Boolean(isPlainObject(value) && value.type === ASYNC_SIGNAL_DEFINITION && value[ASYNC_SIGNAL]);
 }
 
 export function isAsyncSignal(value) {
@@ -153,8 +154,19 @@ export function isPlainObject(value) {
 export const flow = defineFlow;
 export const signal = defineSignal;
 export const computed = defineComputed;
-export const status = defineStatus;
 export const asyncSignal = defineAsyncSignal;
+
+function normalizeStatusAllowed(initial, allowed) {
+  if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0)) {
+    throw new TypeError("status(...) allowed values must be a non-empty array when provided.");
+  }
+
+  if (allowed !== undefined && !allowed.some((value) => Object.is(value, initial))) {
+    throw new Error("status(...) initial value must be present in the allowed values.");
+  }
+
+  return allowed === undefined ? undefined : [...allowed];
+}
 
 function normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader) {
   const { options, compute: loader } = normalizeCallbackArgs("asyncSignal", optionsOrLoader, maybeLoader);

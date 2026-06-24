@@ -57,13 +57,11 @@ A Flow instance combines:
 - `store`: author-facing values with getter/setter behavior.
 - `_`: non-enumerable internal controller namespace for `_` store fields.
 - `dispatch(name, input)`: event execution.
-- `can(name, input?)`: event availability checks.
 - `explain(name, input?)`: structured blocked-event reasons.
-- `describe()`: public inspection metadata for stores, handlers, transitions,
-  and guards.
 
 The package also provides `compose(...)`, `parallel(...)`, and `remember(...)`
-for ordered handler steps.
+for ordered handler steps. Use imported `can(...)` for event availability and
+imported `inspect(...)` for public metadata snapshots.
 
 ## Store Values
 
@@ -191,7 +189,7 @@ step helpers when the repeated parts are store writes, gates, branches, event
 dispatches, or scheduled follow-up events.
 
 ```js
-import { compose, every, flow, matches, not, parallel, set, status, when } from "@async/flow";
+import { compose, dispatch, every, flow, matches, not, parallel, set, status, when } from "@async/flow";
 
 const checkout = flow({
   store: {
@@ -238,6 +236,24 @@ That lets `loading = true` render before async work settles.
 
 More detail: [Compose And Status Helpers](docs/compose-and-status.md).
 
+`dispatch("event", payload?)` creates a reusable deferred sender. In a composed
+Flow handler it dispatches to the current Flow receiver; outside Flow it can be
+sent to any supported event sink.
+
+```js
+const ready = dispatch("ready", { id: 1 });
+
+ready.call(checkout);
+ready.call(element);
+ready.emit(emitter);
+ready.send(sender);
+
+dispatch(checkout, "ready", { id: 1 });
+dispatch(element, "ready", { id: 1 });
+dispatch(emitter, "ready", { id: 1 });
+dispatch(sender, "ready", { id: 1 });
+```
+
 ## Event Availability And Inspection
 
 Flow can answer whether an event is registered and whether Flow-visible guards,
@@ -245,7 +261,9 @@ transitions, or explicit leading availability gates currently allow it without
 dispatching the event.
 
 ```js
-checkout.can("submit"); // false while the leading availability gate is blocked
+import { can, inspect } from "@async/flow";
+
+can(checkout, "submit").get(); // false while the leading availability gate is blocked
 checkout.explain("submit");
 // { event: "submit", allowed: false, reason: "not_ready", source: "guard", label: "Submit order" }
 
@@ -253,17 +271,42 @@ checkout.explain("missing");
 // { event: "missing", allowed: false, reason: "unknown_event" }
 ```
 
-Use `describe()` when adapters or tests need stable public metadata:
+Use `inspect(...)` when adapters need stable public metadata:
 
 ```js
-const description = checkout.describe();
+const description = inspect(checkout);
 
 description.handlers; // ["submit"]
-description.store.step.kind; // "status"
+description.store.step.type; // "status"
 ```
 
-Descriptions expose names, current values, lifecycle state, and safe metadata.
+Inspections expose names, current values, lifecycle state, and safe metadata.
 They do not expose raw handlers or predicates.
+
+Use `inspect(...)` for standalone status refs, computed refs, transition
+helpers, and timer helpers without depending on a Flow instance:
+
+```js
+import { after, inspect, status } from "@async/flow";
+
+const phase = status("idle", ["idle", "active"]);
+const description = inspect(phase);
+
+description.type; // "status"
+description.value; // "idle"
+```
+
+`after(ms, callback, input?)` also works without a Flow instance. It returns a
+cancellable timer helper.
+
+```js
+const markReady = after(100, (next) => {
+  phase.set(next);
+}, "ready");
+
+const cancel = markReady();
+cancel();
+```
 
 ## Runtime Options
 
@@ -308,9 +351,10 @@ const appFlow = flow(
 ```
 
 Receiver capabilities include `this.store`, `this.refs`, `this.asyncSignals`,
-`this.dispatch(name, input)`, `this.can(name, input)`,
-`this.explain(name, input)`, `this.describe()`,
-`this.after(ms, eventName, input)`, and `this.dispose(cleanup)`.
+`this.dispatch(name, input)`, `this.explain(name, input)`,
+`this.after(ms, eventName, input)`, and `this.dispose(cleanup)`. Imported
+`dispatch(...)`, `can(...)`, and `inspect(...)` can also receive a Flow handler
+receiver.
 
 ## Root And Subpaths
 
@@ -345,9 +389,6 @@ import {
   when
 } from "@async/flow";
 ```
-
-The old `@async/flow/run` subpath is not public. Use the root `compose(...)`
-export or the narrow `@async/flow/compose` entrypoint.
 
 ## Docs
 

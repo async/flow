@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- `status(...)` now creates a live signal-based status ref. Use
+  `defineStatus(...)` when a pure declaration object is required.
+- Removed the root `statusHelper` export.
+- Removed `status` from `@async/flow/define`; use `defineStatus(...)`.
+- Removed Flow instance and receiver availability methods. Use imported
+  `can(flow, eventName).get()` or `can(receiver, eventName).get()`.
+- Removed Flow instance and receiver description methods. Use imported
+  `inspect(flow)` or `inspect(receiver)`.
+- Removed private `_describe` receiver metadata. Helper inspection and status
+  inference now use the `FLOW_INSPECT` symbol.
+- Renamed public metadata and ref discriminator fields from `kind` to `type`.
+- `transition("name", rules)` now requires a Flow store argument or
+  symbol-branded Flow receiver. It no longer falls back to any object with a
+  `store` property.
+- Standalone transitions are now branded with
+  `STANDALONE_TRANSITION = Symbol.for("@async/flow.standaloneTransition")`.
+- `after(ms, callback, input?)` now creates a standalone cancellable timer
+  helper branded with `STANDALONE_AFTER =
+  Symbol.for("@async/flow.standaloneAfter")`.
+- `dispatch("event", payload?)` now creates a proxy-backed reusable sender
+  branded with `STANDALONE_DISPATCH =
+  Symbol.for("@async/flow.standaloneDispatch")`.
+- `dispatch(target, "event", payload?)` now dispatches immediately to Flow,
+  DOM, emitter, and sender-style targets.
+- `can(...)`, `matches(...)`, `set(...)`, `update(...)`, `dispatch(...)`, and
+  boolean helpers now prefer live ref behavior when passed signal, status,
+  computed, Flow, or standalone refs.
+
 ## 0.6.0 - 2026-06-24
 
 - Added explicit compose availability metadata with `AVAILABILITY`,

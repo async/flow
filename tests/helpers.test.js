@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { every, flow, matches, status } from "@async/flow";
+import { can, every, flow, matches, status } from "@async/flow";
 import { compose } from "@async/flow/compose";
 import { after, branch, dispatch, onError, set, update, when } from "@async/flow/steps";
 
@@ -234,7 +234,7 @@ test("when stops a helper chain without applying later steps", () => {
     }
   });
 
-  assert.equal(checkout.can("submit"), true);
+  assert.equal(can(checkout, "submit").get(), true);
   assert.equal(checkout.submit(), undefined);
   assert.equal(checkout.store.loading, false);
 });
