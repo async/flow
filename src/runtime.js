@@ -1,14 +1,14 @@
 import {
   COMPUTED,
-  RESOURCE,
-  RESOURCE_IMMEDIATE,
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
   SIGNAL,
   STATUS,
   defineFlow,
   isComputedDefinition,
   isFlowDefinition,
   isPlainObject,
-  isResourceDefinition,
+  isAsyncSignalDefinition,
   isSignalDefinition,
   isStatusDefinition
 } from "./define.js";
@@ -34,7 +34,7 @@ const RESERVED_INSTANCE_NAMES = new Set([
   "destroy",
   "store",
   "refs",
-  "resources",
+  "asyncSignals",
   "handlers"
 ]);
 
@@ -253,7 +253,7 @@ export function createComputed(optionsOrCompute, maybeCompute, maybeRuntimeOptio
 }
 
 export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
-  const { options, loader, runtimeOptions } = normalizeCreateResourceArgs(
+  const { options, loader, runtimeOptions } = normalizeCreateAsyncSignalArgs(
     optionsOrLoader,
     maybeLoader,
     maybeRuntimeOptions
@@ -262,7 +262,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   const subscribers = new Set();
   let store;
   let refs;
-  let resources;
+  let asyncSignals;
   let status = "idle";
   let value;
   let hasValue = false;
@@ -270,41 +270,41 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   let version = 0;
   let currentRun;
 
-  const resource = {
-    [RESOURCE]: true,
+  const asyncSignalRef = {
+    [ASYNC_SIGNAL]: true,
     kind: "asyncSignal",
 
     get value() {
-      return resource.get();
+      return asyncSignalRef.get();
     },
 
     get status() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return status;
     },
 
     get loading() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return status === "loading";
     },
 
     get ready() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return status === "ready";
     },
 
     get error() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return error;
     },
 
     get version() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return version;
     },
 
     get() {
-      trackDependency(resource);
+      trackDependency(asyncSignalRef);
       return value;
     },
 
@@ -346,7 +346,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
         throw new TypeError("Async signal update requires a function.");
       }
 
-      return resource.set(fn(value));
+      return asyncSignalRef.set(fn(value));
     },
 
     cancel(reason) {
@@ -361,7 +361,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
 
     subscribe(fn) {
       if (typeof fn !== "function") {
-        throw new TypeError("Resource subscriber must be a function.");
+        throw new TypeError("Async signal subscriber must be a function.");
       }
 
       subscribers.add(fn);
@@ -389,21 +389,21 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
         return;
       }
 
-      resource.set(snapshot);
+      asyncSignalRef.set(snapshot);
     },
 
-    _attachStore(nextStore, nextRefs, nextResources) {
+    _attachStore(nextStore, nextRefs, nextAsyncSignals) {
       store = nextStore;
       refs = nextRefs;
-      resources = nextResources;
+      asyncSignals = nextAsyncSignals;
       if (runtimeOptions.deferImmediate === true && options.immediate === true) {
-        resource.load();
+        asyncSignalRef.load();
       }
     }
   };
 
   if (options.immediate === true) {
-    Object.defineProperty(resource, RESOURCE_IMMEDIATE, {
+    Object.defineProperty(asyncSignalRef, ASYNC_SIGNAL_IMMEDIATE, {
       configurable: false,
       enumerable: false,
       value: true
@@ -411,10 +411,10 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   }
 
   if (options.immediate === true && runtimeOptions.deferImmediate !== true) {
-    resource.load();
+    asyncSignalRef.load();
   }
 
-  return resource;
+  return asyncSignalRef;
 
   function startRun(explicitArgs) {
     const controller = new AbortController();
@@ -437,7 +437,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
         loader.apply(createAsyncSignalReceiver({
           store,
           refs,
-          resources,
+          asyncSignals,
           name: runtimeOptions.name,
           signal: controller.signal,
           version: runVersion,
@@ -504,8 +504,6 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   }
 }
 
-export const createResource = createAsyncSignal;
-
 export function createStore(declarations = {}, options = {}) {
   if (!isPlainObject(declarations)) {
     throw new TypeError("createStore(...) requires a store declaration object.");
@@ -513,7 +511,7 @@ export function createStore(declarations = {}, options = {}) {
 
   const scheduler = resolveScheduler(options);
   const refs = {};
-  const resources = {};
+  const asyncSignals = {};
   const plainValues = {};
   const writableNames = new Set();
   const statusNames = new Set();
@@ -540,8 +538,8 @@ export function createStore(declarations = {}, options = {}) {
       continue;
     }
 
-    if (isResourceLike(declaration)) {
-      const ref = isResourceDefinition(declaration)
+    if (isAsyncSignalLike(declaration)) {
+      const ref = isAsyncSignalDefinition(declaration)
         ? createAsyncSignal(declaration, {
             scheduler,
             name,
@@ -549,7 +547,7 @@ export function createStore(declarations = {}, options = {}) {
           })
         : declaration;
       refs[name] = ref;
-      resources[name] = ref;
+      asyncSignals[name] = ref;
       writableNames.add(name);
       continue;
     }
@@ -572,11 +570,11 @@ export function createStore(declarations = {}, options = {}) {
     writableNames.add(name);
   }
 
-  store = createStoreProxy(refs, resources, plainValues, writableNames);
+  store = createStoreProxy(refs, asyncSignals, plainValues, writableNames);
 
   for (const ref of Object.values(refs)) {
-    if (ref?.[RESOURCE] && typeof ref._attachStore === "function") {
-      ref._attachStore(store, refs, resources);
+    if (ref?.[ASYNC_SIGNAL] && typeof ref._attachStore === "function") {
+      ref._attachStore(store, refs, asyncSignals);
     }
   }
 
@@ -587,12 +585,12 @@ export function createStore(declarations = {}, options = {}) {
       : createComputed(declaration.options ?? {}, compute, { scheduler, store, refs, name, context });
   }
 
-  const internal = createInternalStoreNamespace(refs, resources, plainValues);
+  const internal = createInternalStoreNamespace(refs, asyncSignals, plainValues);
 
   return {
     store,
     refs,
-    resources,
+    asyncSignals,
     internal,
     writableNames,
     statusNames,
@@ -603,12 +601,12 @@ export function createStore(declarations = {}, options = {}) {
         snapshot[name] = ref.snapshot();
       }
 
-      for (const [name, resource] of Object.entries(resources)) {
-        if (refs[name] === resource) {
+      for (const [name, asyncSignalRef] of Object.entries(asyncSignals)) {
+        if (refs[name] === asyncSignalRef) {
           continue;
         }
 
-        snapshot[name] = resource.snapshot();
+        snapshot[name] = asyncSignalRef.snapshot();
       }
 
       for (const [name, value] of Object.entries(plainValues)) {
@@ -627,10 +625,10 @@ export function createStore(declarations = {}, options = {}) {
 
         if (ref?.[SIGNAL] || ref?.[STATUS]) {
           ref.set(value);
-        } else if (ref?.[RESOURCE]) {
+        } else if (ref?.[ASYNC_SIGNAL]) {
           ref.restore(value);
-        } else if (resources[name]) {
-          resources[name].restore(value);
+        } else if (asyncSignals[name]) {
+          asyncSignals[name].restore(value);
         } else if (Object.hasOwn(plainValues, name)) {
           plainValues[name] = value;
         }
@@ -685,16 +683,16 @@ export function createFlow(definitionOrConfig, options = {}) {
       transition: (eventName) => transitionMetadata.get(eventName)
     }
   });
-  const { store, refs, resources, internal, writableNames, statusNames } = storeState;
+  const { store, refs, asyncSignals, internal, writableNames, statusNames } = storeState;
 
   flow = {
     store,
     refs,
-    resources,
+    asyncSignals,
     handlers,
 
     get(name) {
-      assertKnownStoreValue(refs, resources, name);
+      assertKnownStoreValue(refs, asyncSignals, name);
       return store[name];
     },
 
@@ -724,7 +722,7 @@ export function createFlow(definitionOrConfig, options = {}) {
         return () => wholeSubscribers.delete(nameOrFn);
       }
 
-      assertKnownStoreValue(refs, resources, nameOrFn);
+      assertKnownStoreValue(refs, asyncSignals, nameOrFn);
       if (!refs[nameOrFn]) {
         throw new Error(`Flow store value "${nameOrFn}" is not subscribable.`);
       }
@@ -803,7 +801,7 @@ export function createFlow(definitionOrConfig, options = {}) {
         transitions: Object.fromEntries(transitionMetadata),
         guards: Object.fromEntries(guardMetadata),
         store: Object.keys(refs),
-        resources: Object.keys(resources),
+        asyncSignals: Object.keys(asyncSignals),
         handlers: Object.keys(handlers)
       };
     }
@@ -827,12 +825,12 @@ export function createFlow(definitionOrConfig, options = {}) {
     refStops.push(ref.subscribe((value) => recordChange(name, value)));
   }
 
-  for (const [name, resource] of Object.entries(resources)) {
-    if (refs[name] === resource) {
+  for (const [name, asyncSignalRef] of Object.entries(asyncSignals)) {
+    if (refs[name] === asyncSignalRef) {
       continue;
     }
 
-    refStops.push(resource.subscribe(() => recordChange(name, store[name])));
+    refStops.push(asyncSignalRef.subscribe(() => recordChange(name, store[name])));
   }
 
   for (const [name, handler] of Object.entries(definition.on)) {
@@ -884,7 +882,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     const receiver = {
       store,
       refs,
-      resources,
+      asyncSignals,
       dispatch: flow.dispatch.bind(flow),
       can: flow.can.bind(flow),
       explain: flow.explain.bind(flow),
@@ -935,7 +933,7 @@ export function createFlow(definitionOrConfig, options = {}) {
   function describeFlow() {
     return {
       store: describeStore(),
-      resources: describeResources(),
+      asyncSignals: describeAsyncSignals(),
       handlers: Object.keys(handlers),
       transitions: describeTransitions(),
       guards: describeGuards()
@@ -962,16 +960,16 @@ export function createFlow(definitionOrConfig, options = {}) {
     return description;
   }
 
-  function describeResources() {
+  function describeAsyncSignals() {
     const description = {};
 
-    for (const [name, resource] of Object.entries(resources)) {
+    for (const [name, asyncSignalRef] of Object.entries(asyncSignals)) {
       description[name] = {
-        kind: "resource",
-        status: resource.status,
-        loading: resource.loading,
-        ready: resource.ready,
-        version: resource.version
+        kind: "asyncSignal",
+        status: asyncSignalRef.status,
+        loading: asyncSignalRef.loading,
+        ready: asyncSignalRef.ready,
+        version: asyncSignalRef.version
       };
     }
 
@@ -1038,14 +1036,25 @@ export function createFlow(definitionOrConfig, options = {}) {
 
     const readonlyStore = createReadonlyStoreView(storeOverride);
 
-    if (guard && !guard.predicate.call(createReadonlyFlowReceiver(readonlyStore), readonlyStore, input, undefined)) {
+    const guardResult = guard
+      ? explainGuard(guard, createReadonlyFlowReceiver(readonlyStore), readonlyStore, input)
+      : { allowed: true };
+
+    if (guard && !guardResult.allowed) {
+      const metadata = guardResult.dynamicMetadata === true
+        ? copyPublicMetadata(guardResult)
+        : {
+            ...copyPublicMetadata(guard),
+            ...copyPublicMetadata(guardResult)
+          };
+
       return {
         event: eventName,
         allowed: false,
-        reason: guard.reason ?? "guard_failed",
+        reason: guardResult.reason ?? guard.reason ?? "guard_failed",
         source: "guard",
         ...describeCurrentTransitionState(transition, storeOverride),
-        ...copyPublicMetadata(guard)
+        ...metadata
       };
     }
 
@@ -1076,8 +1085,8 @@ export function createFlow(definitionOrConfig, options = {}) {
       get refs() {
         return refs;
       },
-      get resources() {
-        return resources;
+      get asyncSignals() {
+        return asyncSignals;
       },
       can(eventName, nextInput) {
         return explainEvent(eventName, nextInput, readonlyStore).allowed;
@@ -1094,6 +1103,23 @@ export function createFlow(definitionOrConfig, options = {}) {
           handlers: Object.keys(definition.on)
         };
       }
+    };
+  }
+
+  function explainGuard(guard, receiver, readonlyStore, input) {
+    if (typeof guard.explain === "function") {
+      const result = guard.explain.call(receiver, readonlyStore, input, undefined);
+      if (result && typeof result === "object") {
+        return {
+          allowed: result.allowed === true,
+          ...copyPublicMetadata(result),
+          dynamicMetadata: result.dynamicMetadata === true
+        };
+      }
+    }
+
+    return {
+      allowed: Boolean(guard.predicate.call(receiver, readonlyStore, input, undefined))
     };
   }
 
@@ -1236,7 +1262,7 @@ function createWritableRefForDeclaration(name, declaration, scheduler) {
   return createSignal(declaration, { scheduler });
 }
 
-function createStoreProxy(refs, resources, plainValues, writableNames) {
+function createStoreProxy(refs, asyncSignals, plainValues, writableNames) {
   return new Proxy(
     {},
     {
@@ -1245,13 +1271,13 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
           return undefined;
         }
 
-        const entry = refs[prop] ?? resources[prop];
+        const entry = refs[prop] ?? asyncSignals[prop];
 
-        if (entry?.[RESOURCE] && isInternalStoreName(prop)) {
+        if (entry?.[ASYNC_SIGNAL] && isInternalStoreName(prop)) {
           return entry;
         }
 
-        if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED] || entry?.[RESOURCE]) {
+        if (entry?.[SIGNAL] || entry?.[STATUS] || entry?.[COMPUTED] || entry?.[ASYNC_SIGNAL]) {
           return entry.get();
         }
 
@@ -1263,14 +1289,14 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
           return false;
         }
 
-        const entry = refs[prop] ?? resources[prop];
+        const entry = refs[prop] ?? asyncSignals[prop];
 
         if (entry?.[STATUS]) {
           entry.set(value);
           return true;
         }
 
-        if (entry?.[SIGNAL] || entry?.[RESOURCE]) {
+        if (entry?.[SIGNAL] || entry?.[ASYNC_SIGNAL]) {
           entry.set(value);
           return true;
         }
@@ -1289,13 +1315,13 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
       },
 
       has(_target, prop) {
-        return Object.hasOwn(refs, prop) || Object.hasOwn(resources, prop) || Object.hasOwn(plainValues, prop);
+        return Object.hasOwn(refs, prop) || Object.hasOwn(asyncSignals, prop) || Object.hasOwn(plainValues, prop);
       },
 
       ownKeys() {
         return [...new Set([
           ...Object.keys(refs),
-          ...Object.keys(resources),
+          ...Object.keys(asyncSignals),
           ...Object.keys(plainValues)
         ])];
       },
@@ -1307,7 +1333,7 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
 
         if (
           Object.hasOwn(refs, prop) ||
-          Object.hasOwn(resources, prop) ||
+          Object.hasOwn(asyncSignals, prop) ||
           Object.hasOwn(plainValues, prop)
         ) {
           return {
@@ -1322,11 +1348,11 @@ function createStoreProxy(refs, resources, plainValues, writableNames) {
   );
 }
 
-function createInternalStoreNamespace(refs, resources, plainValues) {
+function createInternalStoreNamespace(refs, asyncSignals, plainValues) {
   const namespace = {};
   const names = new Set([
     ...Object.keys(refs),
-    ...Object.keys(resources),
+    ...Object.keys(asyncSignals),
     ...Object.keys(plainValues)
   ]);
 
@@ -1335,11 +1361,11 @@ function createInternalStoreNamespace(refs, resources, plainValues) {
       continue;
     }
 
-    if (resources[name]) {
+    if (asyncSignals[name]) {
       Object.defineProperty(namespace, name, {
         configurable: false,
         enumerable: true,
-        value: resources[name],
+        value: asyncSignals[name],
         writable: false
       });
       continue;
@@ -1489,11 +1515,11 @@ function isComputedDeclaration(value) {
 }
 
 function isBrandedStoreEntry(value) {
-  return isSignalDefinition(value) || isStatusDefinition(value) || isComputedDefinition(value) || isResourceLike(value);
+  return isSignalDefinition(value) || isStatusDefinition(value) || isComputedDefinition(value) || isAsyncSignalLike(value);
 }
 
-function isResourceLike(value) {
-  return Boolean(value && typeof value === "object" && value[RESOURCE]);
+function isAsyncSignalLike(value) {
+  return Boolean(value && typeof value === "object" && value[ASYNC_SIGNAL]);
 }
 
 function isAccessorDescriptor(descriptor) {
@@ -1532,8 +1558,8 @@ function normalizeCreateComputedArgs(optionsOrCompute, maybeCompute, maybeRuntim
   };
 }
 
-function normalizeCreateResourceArgs(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
-  if (isResourceDefinition(optionsOrLoader)) {
+function normalizeCreateAsyncSignalArgs(optionsOrLoader, maybeLoader, maybeRuntimeOptions) {
+  if (isAsyncSignalDefinition(optionsOrLoader)) {
     return {
       options: optionsOrLoader.options,
       loader: optionsOrLoader.loader,
@@ -1664,7 +1690,7 @@ function createAsyncSignalReceiver(options) {
   return {
     store: options.store,
     refs: options.refs,
-    resources: options.resources,
+    asyncSignals: options.asyncSignals,
     name: options.name,
     signal: options.signal,
     version: options.version,
@@ -1694,8 +1720,8 @@ function assertAllowedStatusValue(name, value, allowedValues) {
   }
 }
 
-function assertKnownStoreValue(refs, resources, name) {
-  if (!Object.hasOwn(refs, name) && !Object.hasOwn(resources, name)) {
+function assertKnownStoreValue(refs, asyncSignals, name) {
+  if (!Object.hasOwn(refs, name) && !Object.hasOwn(asyncSignals, name)) {
     throw new Error(`Unknown Flow store value "${name}".`);
   }
 }

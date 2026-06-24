@@ -1,4 +1,6 @@
 const COMPOSE_STOP = Symbol("async.flow.compose.stop");
+const AVAILABILITY = Symbol.for("@async/flow.availability");
+const GUARD = Symbol.for("@async/flow.guard");
 export const COMPOSE_BATCH = Symbol.for("@async/flow.compose.batch");
 
 export function compose(stepOrSteps) {
@@ -10,9 +12,12 @@ export function compose(stepOrSteps) {
     }
   }
 
-  return function composed(store, input) {
+  const composed = function composed(store, input) {
     return runSteps(steps, this, store, input, undefined);
   };
+
+  liftLeadingAvailability(steps, composed);
+  return composed;
 }
 
 export function parallel(branches) {
@@ -238,4 +243,83 @@ function isRememberTuple(value) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function liftLeadingAvailability(steps, target) {
+  const gates = [];
+
+  for (const step of steps) {
+    if (!step?.[AVAILABILITY]) {
+      break;
+    }
+
+    gates.push(step[AVAILABILITY]);
+  }
+
+  if (gates.length === 0) {
+    return;
+  }
+
+  const metadata = firstPublicMetadata(gates);
+
+  Object.defineProperty(target, GUARD, {
+    configurable: true,
+    value: {
+      predicate(store, input, previous) {
+        return explainAvailability(gates, this, store, input, previous).allowed;
+      },
+      explain(store, input, previous) {
+        return explainAvailability(gates, this, store, input, previous);
+      },
+      ...metadata
+    }
+  });
+}
+
+function explainAvailability(gates, receiver, store, input, previous) {
+  for (const gate of gates) {
+    if (!gate.predicate.call(receiver, store, input, previous)) {
+      return {
+        allowed: false,
+        reason: gate.reason ?? "guard_failed",
+        ...copyPublicLabel(gate),
+        dynamicMetadata: true
+      };
+    }
+  }
+
+  return {
+    allowed: true
+  };
+}
+
+function firstPublicMetadata(gates) {
+  for (const gate of gates) {
+    const metadata = copyPublicMetadata(gate);
+    if (Object.keys(metadata).length > 0) {
+      return metadata;
+    }
+  }
+
+  return {};
+}
+
+function copyPublicMetadata(source) {
+  const metadata = {};
+
+  if (typeof source?.reason === "string") {
+    metadata.reason = source.reason;
+  }
+
+  if (typeof source?.label === "string") {
+    metadata.label = source.label;
+  }
+
+  return metadata;
+}
+
+function copyPublicLabel(source) {
+  return typeof source?.label === "string"
+    ? { label: source.label }
+    : {};
 }

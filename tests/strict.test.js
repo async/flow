@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AVAILABILITY,
   GUARD,
   TRANSITION,
   bool,
@@ -13,7 +14,8 @@ import {
   set,
   some,
   status,
-  transition
+  transition,
+  when
 } from "@async/flow";
 import { compose } from "@async/flow/compose";
 
@@ -81,6 +83,11 @@ test("guard skips the handler when the predicate is false", () => {
 test("transition and guard metadata use public symbols", () => {
   const move = transition("step", { shipping: "payment" });
   const guarded = guard(() => true, move);
+  const availability = when(() => true, {
+    availability: true,
+    reason: "ready_required",
+    label: "Ready"
+  });
 
   assert.equal(move[TRANSITION].status, "step");
   assert.deepEqual(move[TRANSITION].rules, [
@@ -92,8 +99,12 @@ test("transition and guard metadata use public symbols", () => {
   ]);
   assert.equal(guarded[TRANSITION], move[TRANSITION]);
   assert.equal(typeof guarded[GUARD].predicate, "function");
+  assert.equal(typeof availability[AVAILABILITY].predicate, "function");
+  assert.equal(availability[AVAILABILITY].reason, "ready_required");
+  assert.equal(availability[AVAILABILITY].label, "Ready");
   assert.equal(Object.hasOwn(move, "_flowTransition"), false);
   assert.equal(Object.hasOwn(guarded, "_flowTransition"), false);
+  assert.equal(Object.hasOwn(availability, "_flowAvailability"), false);
 });
 
 test("strict helpers work inside compose pipelines", () => {
@@ -113,6 +124,160 @@ test("strict helpers work inside compose pipelines", () => {
   checkout.next();
   assert.equal(checkout.store.step, "payment");
   assert.equal(checkout.store.moved, true);
+});
+
+test("compose lifts leading availability gates into event inspection", () => {
+  const checkout = flow({
+    store: {
+      readyToSubmit: false,
+      loading: false,
+      canSubmitNow: can("submit")
+    },
+    on: {
+      submit: compose([
+        when((store, input) => store.readyToSubmit && input?.confirm === true, {
+          availability: true,
+          reason: "not_ready",
+          label: "Submit order"
+        }),
+        set("loading", true)
+      ])
+    }
+  });
+
+  assert.equal(checkout.can("submit", { confirm: true }), false);
+  assert.equal(checkout.store.canSubmitNow, false);
+  assert.deepEqual(checkout.explain("submit", { confirm: true }), {
+    event: "submit",
+    allowed: false,
+    reason: "not_ready",
+    source: "guard",
+    label: "Submit order"
+  });
+  assert.deepEqual(checkout.describe().guards.submit, {
+    conditional: true,
+    reason: "not_ready",
+    label: "Submit order"
+  });
+  assert.equal(Object.hasOwn(checkout.describe().guards.submit, "predicate"), false);
+  assert.equal(checkout.submit({ confirm: true }), undefined);
+  assert.equal(checkout.store.loading, false);
+
+  checkout.store.readyToSubmit = true;
+  assert.equal(checkout.can("submit", { confirm: true }), true);
+  assert.deepEqual(checkout.explain("submit", { confirm: true }), {
+    event: "submit",
+    allowed: true,
+    reason: "allowed",
+    source: "guard",
+    label: "Submit order"
+  });
+  checkout.submit({ confirm: true });
+  assert.equal(checkout.store.loading, true);
+});
+
+test("multiple leading availability gates report the first failed gate", () => {
+  const checkout = flow({
+    store: {
+      accountReady: false,
+      submitted: false
+    },
+    on: {
+      submit: compose([
+        when((store) => store.accountReady, {
+          availability: true,
+          reason: "account_not_ready",
+          label: "Account ready"
+        }),
+        when((_store, input) => input?.confirm === true, {
+          availability: true,
+          reason: "confirm_required",
+          label: "Confirm submit"
+        }),
+        set("submitted", true)
+      ])
+    }
+  });
+
+  assert.deepEqual(checkout.explain("submit", { confirm: false }), {
+    event: "submit",
+    allowed: false,
+    reason: "account_not_ready",
+    source: "guard",
+    label: "Account ready"
+  });
+
+  checkout.store.accountReady = true;
+  assert.deepEqual(checkout.explain("submit", { confirm: false }), {
+    event: "submit",
+    allowed: false,
+    reason: "confirm_required",
+    source: "guard",
+    label: "Confirm submit"
+  });
+
+  assert.equal(checkout.can("submit", { confirm: true }), true);
+  checkout.submit({ confirm: true });
+  assert.equal(checkout.store.submitted, true);
+});
+
+test("availability metadata does not bleed from later gates", () => {
+  const checkout = flow({
+    store: {
+      ready: false
+    },
+    on: {
+      submit: compose([
+        when((store) => store.ready, {
+          availability: true
+        }),
+        when(() => false, {
+          availability: true,
+          reason: "later_failed",
+          label: "Later gate"
+        })
+      ])
+    }
+  });
+
+  assert.deepEqual(checkout.explain("submit"), {
+    event: "submit",
+    allowed: false,
+    reason: "guard_failed",
+    source: "guard"
+  });
+});
+
+test("compose does not lift later availability gates", () => {
+  const checkout = flow({
+    store: {
+      touched: false,
+      ready: false,
+      submitted: false
+    },
+    on: {
+      submit: compose([
+        set("touched", true),
+        when((store) => store.ready, {
+          availability: true,
+          reason: "not_ready"
+        }),
+        set("submitted", true)
+      ])
+    }
+  });
+
+  assert.equal(checkout.can("submit"), true);
+  assert.deepEqual(checkout.explain("submit"), {
+    event: "submit",
+    allowed: true,
+    reason: "plain_handler",
+    source: "handler"
+  });
+
+  checkout.submit();
+  assert.equal(checkout.store.touched, true);
+  assert.equal(checkout.store.submitted, false);
 });
 
 test("can and matches compute from strict transition metadata and status values", () => {

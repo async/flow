@@ -3,10 +3,14 @@ import type { FlowComputedDefinition } from "./define.js";
 
 export const TRANSITION: unique symbol;
 export const GUARD: unique symbol;
+export const AVAILABILITY: unique symbol;
 export const status: typeof import("./define.js").defineStatus;
 export type FlowMetadataOptions = {
   reason?: string;
   label?: string;
+};
+export type FlowAvailabilityOptions = FlowMetadataOptions & {
+  availability?: boolean;
 };
 export type FlowStepResolver = (
   store: Record<string, unknown>,
@@ -49,7 +53,8 @@ export function every(...conditions: FlowBooleanCondition[]): FlowComputedDefini
 export function some(...conditions: FlowBooleanCondition[]): FlowComputedDefinition<boolean>;
 export function not(condition: FlowBooleanCondition): FlowComputedDefinition<boolean>;
 export function when(
-  predicate: FlowBooleanCondition
+  predicate: FlowBooleanCondition,
+  options?: FlowAvailabilityOptions
 ): FlowHandler;
 export function branch(cases: readonly FlowBranchCase[]): FlowHandler;
 export function onError(

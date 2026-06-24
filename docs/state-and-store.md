@@ -138,7 +138,8 @@ state.store._settings.reload();
 
 ## Store Proxy
 
-`createStore(shape)` returns store values and controller-capable internal fields.
+`createStore(shape)` returns store values, refs, async signal controllers, and
+controller-capable internal fields.
 
 ```js
 import { computed, createStore, signal, status } from "@async/flow";
@@ -169,4 +170,5 @@ The store proxy unwraps known Flow types:
 
 Use `store` for author-facing reads and writes. Keep lifecycle methods on
 internal `_` fields when an adapter needs subscriptions, snapshots, direct
-setters, or async signal lifecycle methods.
+setters, or async signal lifecycle methods. Use `asyncSignals` when integration
+code needs the controller namespace directly.

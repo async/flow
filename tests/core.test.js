@@ -377,8 +377,8 @@ test("flow describe returns fresh public store async signal handler transition a
     writable: true,
     value: undefined
   });
-  assert.deepEqual(description.resources.user, {
-    kind: "resource",
+  assert.deepEqual(description.asyncSignals.user, {
+    kind: "asyncSignal",
     status: "idle",
     loading: false,
     ready: false,
@@ -497,6 +497,9 @@ test("root entrypoint exposes the opinionated public surface", async () => {
     "every",
     "flow",
     "guard",
+    "isAsyncSignal",
+    "isAsyncSignalDefinition",
+    "isImmediateAsyncSignal",
     "matches",
     "not",
     "onError",
@@ -514,6 +517,9 @@ test("root entrypoint exposes the opinionated public surface", async () => {
   for (const name of names) {
     assert.equal(typeof root[name], "function", `${name} should be exported from root`);
   }
+  assert.equal(typeof root.ASYNC_SIGNAL, "symbol");
+  assert.equal(typeof root.ASYNC_SIGNAL_IMMEDIATE, "symbol");
+  assert.equal(typeof root.AVAILABILITY, "symbol");
   assert.equal(typeof root.FLOW_INSTANCE, "symbol");
 });
 

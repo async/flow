@@ -205,7 +205,11 @@ const checkout = flow({
 
   on: {
     submit: compose([
-      when((store) => store.readyToSubmit),
+      when((store) => store.readyToSubmit, {
+        availability: true,
+        reason: "not_ready",
+        label: "Submit order"
+      }),
       set("loading", true),
       parallel({
         inventory(_store, input) {
@@ -236,10 +240,15 @@ More detail: [Compose And Status Helpers](docs/compose-and-status.md).
 
 ## Event Availability And Inspection
 
-Flow can answer whether an event is callable now without dispatching it.
+Flow can answer whether an event is registered and whether Flow-visible guards,
+transitions, or explicit leading availability gates currently allow it without
+dispatching the event.
 
 ```js
-checkout.can("submit"); // true for this plain composed handler
+checkout.can("submit"); // false while the leading availability gate is blocked
+checkout.explain("submit");
+// { event: "submit", allowed: false, reason: "not_ready", source: "guard", label: "Submit order" }
+
 checkout.explain("missing");
 // { event: "missing", allowed: false, reason: "unknown_event" }
 ```
@@ -298,8 +307,9 @@ const appFlow = flow(
 );
 ```
 
-Receiver capabilities include `this.store`, `this.dispatch(name, input)`,
-`this.can(name, input)`, `this.explain(name, input)`, `this.describe()`,
+Receiver capabilities include `this.store`, `this.refs`, `this.asyncSignals`,
+`this.dispatch(name, input)`, `this.can(name, input)`,
+`this.explain(name, input)`, `this.describe()`,
 `this.after(ms, eventName, input)`, and `this.dispose(cleanup)`.
 
 ## Root And Subpaths

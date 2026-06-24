@@ -4,21 +4,18 @@ export {
   defineStatus,
   defineComputed,
   defineAsyncSignal,
-  defineResource,
   SIGNAL,
   STATUS,
   COMPUTED,
-  RESOURCE,
-  RESOURCE_IMMEDIATE,
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
   defineSignal as signal,
   defineComputed as computed,
   defineStatus as status,
   defineAsyncSignal as asyncSignal,
-  defineResource as resource,
   isAsyncSignal,
   isAsyncSignalDefinition,
-  isResource,
-  isImmediateResource
+  isImmediateAsyncSignal
 } from "./define.js";
 export {
   createFlow,
@@ -27,7 +24,6 @@ export {
   createStatus,
   createComputed,
   createAsyncSignal,
-  createResource,
   FLOW_INSTANCE
 } from "./runtime.js";
 export {
@@ -48,6 +44,7 @@ export {
   when,
   branch,
   onError,
+  AVAILABILITY,
   TRANSITION,
   GUARD,
   status as statusHelper,
@@ -59,6 +56,7 @@ export {
 export type {
   FlowBooleanCondition,
   FlowBooleanPredicate,
+  FlowAvailabilityOptions,
   FlowMetadataOptions,
   FlowPredicate,
   FlowStepResolver,

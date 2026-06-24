@@ -1,16 +1,12 @@
 export {
   defineAsyncSignal,
   defineAsyncSignal as asyncSignal,
-  defineResource,
   isAsyncSignal,
   isAsyncSignalDefinition,
-  isImmediateResource,
-  isResource,
-  isResourceDefinition,
-  RESOURCE,
-  RESOURCE_IMMEDIATE
+  isImmediateAsyncSignal,
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE
 } from "./define.js";
 export {
-  createAsyncSignal,
-  createResource
+  createAsyncSignal
 } from "./runtime.js";

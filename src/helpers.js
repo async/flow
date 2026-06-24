@@ -3,6 +3,7 @@ import { createComposeStop, isPromiseLike } from "./compose.js";
 
 export const TRANSITION = Symbol.for("@async/flow.transition");
 export const GUARD = Symbol.for("@async/flow.guard");
+export const AVAILABILITY = Symbol.for("@async/flow.availability");
 
 export const status = defineStatus;
 
@@ -94,12 +95,25 @@ export function not(condition) {
   });
 }
 
-export function when(predicate) {
+export function when(predicate, options) {
   const condition = createConditionPredicate(predicate, "when");
+  const availability = normalizeAvailabilityOptions(options, "when");
 
-  return function whenStep(store, input, previous) {
+  const whenStep = function whenStep(store, input, previous) {
     return condition.call(this, store, input, previous) ? undefined : createComposeStop();
   };
+
+  if (availability.enabled) {
+    Object.defineProperty(whenStep, AVAILABILITY, {
+      configurable: true,
+      value: {
+        predicate: condition,
+        ...availability.metadata
+      }
+    });
+  }
+
+  return whenStep;
 }
 
 export function branch(cases) {
@@ -500,6 +514,35 @@ function copyFlowMetadata(source, target) {
       value: source[GUARD]
     });
   }
+
+  if (source?.[AVAILABILITY]) {
+    Object.defineProperty(target, AVAILABILITY, {
+      configurable: true,
+      value: source[AVAILABILITY]
+    });
+  }
+}
+
+function normalizeAvailabilityOptions(options, helperName) {
+  if (options === undefined) {
+    return {
+      enabled: false,
+      metadata: {}
+    };
+  }
+
+  if (!isPlainObject(options)) {
+    throw new TypeError(`${helperName}(...) options must be an object.`);
+  }
+
+  if (Object.hasOwn(options, "availability") && typeof options.availability !== "boolean") {
+    throw new TypeError(`${helperName}(...) availability must be a boolean.`);
+  }
+
+  return {
+    enabled: options.availability === true,
+    metadata: normalizeMetadataOptions(options, helperName)
+  };
 }
 
 function normalizeMetadataOptions(options, helperName) {

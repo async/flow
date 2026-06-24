@@ -1,8 +1,8 @@
 export declare const SIGNAL: unique symbol;
 export declare const STATUS: unique symbol;
 export declare const COMPUTED: unique symbol;
-export declare const RESOURCE: unique symbol;
-export declare const RESOURCE_IMMEDIATE: unique symbol;
+export declare const ASYNC_SIGNAL: unique symbol;
+export declare const ASYNC_SIGNAL_IMMEDIATE: unique symbol;
 
 export type FlowSignalDefinition<T = unknown> = {
   readonly kind: "async.flow.signal";
@@ -31,8 +31,8 @@ export type FlowAsyncSignalOptions = {
 } & Record<string, unknown>;
 
 export type FlowAsyncSignalDefinition<T = unknown, Input = unknown> = {
-  readonly [RESOURCE]: true;
-  readonly [RESOURCE_IMMEDIATE]?: true;
+  readonly [ASYNC_SIGNAL]: true;
+  readonly [ASYNC_SIGNAL_IMMEDIATE]?: true;
   readonly kind: "async.flow.asyncSignal";
   readonly options: FlowAsyncSignalOptions;
   readonly loader: (
@@ -40,9 +40,6 @@ export type FlowAsyncSignalDefinition<T = unknown, Input = unknown> = {
     ...args: Input[]
   ) => T | PromiseLike<T>;
 };
-
-export type FlowResourceOptions = FlowAsyncSignalOptions;
-export type FlowResourceDefinition<T = unknown, Input = unknown> = FlowAsyncSignalDefinition<T, Input>;
 
 export type FlowDefinitionContext = {
   describe?(): {
@@ -61,7 +58,7 @@ export type FlowComputedReceiver = Record<string, unknown> & {
 export type FlowAsyncSignalReceiver = {
   readonly store?: Record<string, unknown>;
   readonly refs?: Record<string, unknown>;
-  readonly resources?: Record<string, unknown>;
+  readonly asyncSignals?: Record<string, unknown>;
   readonly name?: string;
   readonly signal: AbortSignal;
   readonly version: number;
@@ -90,7 +87,6 @@ export function defineAsyncSignal<T = unknown, Input = unknown>(
   options: FlowAsyncSignalOptions,
   loader: FlowAsyncSignalDefinition<T, Input>["loader"]
 ): FlowAsyncSignalDefinition<T, Input>;
-export const defineResource: typeof defineAsyncSignal;
 export function defineFlow(config: {
   store?: Record<string, unknown>;
   on?: Record<string, Function>;
@@ -100,13 +96,10 @@ export function isSignalDefinition(value: unknown): value is FlowSignalDefinitio
 export function isStatusDefinition(value: unknown): value is FlowStatusDefinition;
 export function isComputedDefinition(value: unknown): value is FlowComputedDefinition;
 export function isAsyncSignalDefinition(value: unknown): value is FlowAsyncSignalDefinition;
-export function isResourceDefinition(value: unknown): value is FlowResourceDefinition;
 export function isAsyncSignal(value: unknown): boolean;
-export function isResource(value: unknown): boolean;
-export function isImmediateResource(value: unknown): boolean;
+export function isImmediateAsyncSignal(value: unknown): boolean;
 export const flow: typeof defineFlow;
 export const signal: typeof defineSignal;
 export const computed: typeof defineComputed;
 export const status: typeof defineStatus;
 export const asyncSignal: typeof defineAsyncSignal;
-export const resource: typeof defineResource;

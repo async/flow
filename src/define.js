@@ -3,13 +3,12 @@ export const SIGNAL_DEFINITION = "async.flow.signal";
 export const COMPUTED_DEFINITION = "async.flow.computed";
 export const STATUS_DEFINITION = "async.flow.status";
 export const ASYNC_SIGNAL_DEFINITION = "async.flow.asyncSignal";
-export const RESOURCE_DEFINITION = "async.flow.resource";
 
 export const SIGNAL = Symbol.for("@async/flow.signal");
 export const STATUS = Symbol.for("@async/flow.status");
 export const COMPUTED = Symbol.for("@async/flow.computed");
-export const RESOURCE = Symbol.for("@async/flow.resource");
-export const RESOURCE_IMMEDIATE = Symbol.for("@async/flow.resource.immediate");
+export const ASYNC_SIGNAL = Symbol.for("@async/flow.asyncSignal");
+export const ASYNC_SIGNAL_IMMEDIATE = Symbol.for("@async/flow.asyncSignal.immediate");
 
 export function defineSignal(initial) {
   return {
@@ -51,14 +50,14 @@ export function defineComputed(optionsOrCompute, maybeCompute) {
 export function defineAsyncSignal(optionsOrLoader, maybeLoader) {
   const { options, loader } = normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader);
   const definition = {
-    [RESOURCE]: true,
+    [ASYNC_SIGNAL]: true,
     kind: ASYNC_SIGNAL_DEFINITION,
     options,
     loader
   };
 
   if (options.immediate === true) {
-    Object.defineProperty(definition, RESOURCE_IMMEDIATE, {
+    Object.defineProperty(definition, ASYNC_SIGNAL_IMMEDIATE, {
       configurable: false,
       enumerable: false,
       value: true
@@ -67,8 +66,6 @@ export function defineAsyncSignal(optionsOrLoader, maybeLoader) {
 
   return definition;
 }
-
-export const defineResource = defineAsyncSignal;
 
 export function defineFlow(config = {}) {
   if (isFlowDefinition(config)) {
@@ -133,27 +130,15 @@ export function isComputedDefinition(value) {
 }
 
 export function isAsyncSignalDefinition(value) {
-  return Boolean(isPlainObject(value) && value.kind === ASYNC_SIGNAL_DEFINITION && value[RESOURCE]);
-}
-
-export function isResourceDefinition(value) {
-  return Boolean(
-    isPlainObject(value)
-      && value[RESOURCE]
-      && (value.kind === RESOURCE_DEFINITION || value.kind === ASYNC_SIGNAL_DEFINITION)
-  );
+  return Boolean(isPlainObject(value) && value.kind === ASYNC_SIGNAL_DEFINITION && value[ASYNC_SIGNAL]);
 }
 
 export function isAsyncSignal(value) {
-  return Boolean(value?.[RESOURCE]);
+  return Boolean(value?.[ASYNC_SIGNAL]);
 }
 
-export function isResource(value) {
-  return Boolean(value?.[RESOURCE]);
-}
-
-export function isImmediateResource(value) {
-  return Boolean(value?.[RESOURCE] && value?.[RESOURCE_IMMEDIATE]);
+export function isImmediateAsyncSignal(value) {
+  return Boolean(value?.[ASYNC_SIGNAL] && value?.[ASYNC_SIGNAL_IMMEDIATE]);
 }
 
 export function isPlainObject(value) {
@@ -170,7 +155,6 @@ export const signal = defineSignal;
 export const computed = defineComputed;
 export const status = defineStatus;
 export const asyncSignal = defineAsyncSignal;
-export const resource = defineAsyncSignal;
 
 function normalizeAsyncSignalArgs(optionsOrLoader, maybeLoader) {
   const { options, compute: loader } = normalizeCallbackArgs("asyncSignal", optionsOrLoader, maybeLoader);

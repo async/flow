@@ -48,7 +48,7 @@ export type AsyncSignalOptions = {
 export type AsyncSignalReceiver = {
   readonly store?: Record<string, unknown>;
   readonly refs?: Record<string, unknown>;
-  readonly resources?: Record<string, unknown>;
+  readonly asyncSignals?: Record<string, unknown>;
   readonly name?: string;
   readonly signal: AbortSignal;
   readonly version: number;
@@ -81,8 +81,6 @@ export type AsyncSignal<T = unknown, Input = unknown> = {
   restore(snapshot: AsyncSignalSnapshot<T> | T): void;
 };
 
-export type ResourceSnapshot<T = unknown> = AsyncSignalSnapshot<T>;
-export type Resource<T = unknown, Input = unknown> = AsyncSignal<T, Input>;
 export type SignalLike<T = unknown> = Signal<T> | Status<T> | Computed<T> | AsyncSignal<T>;
 
 export type FlowChange = {
@@ -98,8 +96,8 @@ export type FlowStoreDescriptionEntry = {
   allowed?: readonly unknown[];
 };
 
-export type FlowResourceDescription = {
-  kind: "resource";
+export type FlowAsyncSignalDescription = {
+  kind: "asyncSignal";
   status: "idle" | "loading" | "ready" | "error";
   loading: boolean;
   ready: boolean;
@@ -117,7 +115,7 @@ export type FlowTransitionRuleDescription = {
 
 export type FlowDescription = {
   store: Record<string, FlowStoreDescriptionEntry>;
-  resources: Record<string, FlowResourceDescription>;
+  asyncSignals: Record<string, FlowAsyncSignalDescription>;
   handlers: string[];
   transitions: Record<string, { status: string; rules: FlowTransitionRuleDescription[] }>;
   guards: Record<string, { conditional: true; reason?: string; label?: string }>;
@@ -138,7 +136,7 @@ export type FlowEventExplanation = {
 export type FlowHandlerReceiver = {
   store: Record<string, unknown>;
   refs: Record<string, SignalLike>;
-  resources: Record<string, unknown>;
+  asyncSignals: Record<string, unknown>;
   dispatch(name: string, input?: unknown): unknown | PromiseLike<unknown>;
   can(eventName: string, input?: unknown): boolean;
   explain(eventName: string, input?: unknown): FlowEventExplanation;
@@ -156,7 +154,7 @@ export type FlowHandler<Input = unknown, Result = unknown> = (
 export type StoreInstance = {
   readonly store: Record<string, unknown>;
   readonly refs: Record<string, SignalLike>;
-  readonly resources: Record<string, unknown>;
+  readonly asyncSignals: Record<string, unknown>;
   snapshot(): Record<string, unknown>;
   restore(snapshot: Record<string, unknown>): void;
 };
@@ -166,7 +164,7 @@ export type FlowInstance = {
   readonly _: Record<string, unknown>;
   readonly store: Record<string, unknown>;
   readonly refs: Record<string, SignalLike>;
-  readonly resources: Record<string, unknown>;
+  readonly asyncSignals: Record<string, unknown>;
   readonly handlers: Record<string, (input?: unknown) => unknown | PromiseLike<unknown>>;
   get(name: string): unknown;
   set(name: string, value: unknown): unknown;
@@ -206,7 +204,6 @@ export function createAsyncSignal<T = unknown, Input = unknown>(
   loader: (this: AsyncSignalReceiver, ...args: Input[]) => T | PromiseLike<T>,
   runtimeOptions?: { scheduler?: FlowScheduler; name?: string }
 ): AsyncSignal<T, Input>;
-export const createResource: typeof createAsyncSignal;
 export function createStore(
   declarations?: Record<string, unknown>,
   options?: { scheduler?: FlowScheduler; rejectPlainObjects?: boolean; context?: Record<string, unknown> }

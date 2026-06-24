@@ -142,6 +142,24 @@ compose([
 ]);
 ```
 
+Use `availability: true` when a leading `when(...)` gate should participate in
+pre-dispatch event inspection:
+
+```js
+compose([
+  when((store) => store.canSubmit, {
+    availability: true,
+    reason: "cannot_submit",
+    label: "Submit order"
+  }),
+  set("loading", true)
+]);
+```
+
+Only leading availability gates are lifted into `can(...)` and `explain(...)`.
+Later gates run at dispatch time only, because earlier steps may mutate the
+store before they are evaluated.
+
 `dispatch(eventName, input?)` forwards to another Flow event. `input` may be a
 plain value or a function that receives `(store, input, previous)`.
 
@@ -344,7 +362,10 @@ receive `(store, input, previous)`, matching composed handler steps.
 `guard(predicate, handler)` skips the handler when the predicate is false.
 
 `flow.can(eventName, input?)` and receiver `this.can(eventName, input?)` return
-the same event availability boolean without dispatching the event.
+the same event availability boolean without dispatching the event. Availability
+uses Flow-visible transition metadata, guard metadata, and explicit leading
+`when(..., { availability: true })` gates. Plain composed handlers remain
+callable unless they publish availability metadata.
 
 ```js
 checkout.can("next"); // true
@@ -376,6 +397,8 @@ transition_condition_failed
 guard_failed
 ```
 
+Availability gates can return custom `reason` values through their metadata.
+
 Transition rules and guards may carry `reason` and `label` metadata:
 
 ```js
@@ -390,7 +413,8 @@ guard(
 ```
 
 `flow.describe()` and receiver `this.describe()` return public inspection data
-for store entries, handlers, transitions, and guards.
+for store entries, handlers, transitions, and guards. Availability gates lifted
+from composed handlers appear as guard metadata.
 
 ```js
 const description = checkout.describe();
@@ -401,10 +425,11 @@ description.transitions.next.status; // "step"
 ```
 
 Descriptions are fresh snapshots for inspection. They do not expose raw handler
-functions, guard predicates, or transition condition functions.
+functions, guard predicates, availability predicates, or transition condition
+functions.
 
-Transition and guard metadata use public symbols:
+Transition, guard, and availability metadata use public symbols:
 
 ```js
-import { GUARD, TRANSITION } from "@async/flow";
+import { AVAILABILITY, GUARD, TRANSITION } from "@async/flow";
 ```

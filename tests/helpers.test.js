@@ -234,6 +234,7 @@ test("when stops a helper chain without applying later steps", () => {
     }
   });
 
+  assert.equal(checkout.can("submit"), true);
   assert.equal(checkout.submit(), undefined);
   assert.equal(checkout.store.loading, false);
 });

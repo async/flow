@@ -1,37 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  RESOURCE,
-  RESOURCE_IMMEDIATE,
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
   asyncSignal,
   createAsyncSignal,
-  createResource,
   defineAsyncSignal,
-  defineResource,
   flow,
-  isImmediateResource,
-  isResource,
-  resource
+  isAsyncSignal,
+  isImmediateAsyncSignal
 } from "@async/flow";
 
-test("asyncSignal and compatibility resource names create import-safe declarations", () => {
+test("asyncSignal creates import-safe declarations", () => {
   const loader = async () => "hello";
   const greeting = asyncSignal(loader);
   const profile = defineAsyncSignal({ immediate: true }, loader);
-  const compatibility = resource(loader);
-  const explicitCompatibility = defineResource(loader);
 
-  assert.equal(greeting[RESOURCE], true);
-  assert.equal(greeting[RESOURCE_IMMEDIATE], undefined);
+  assert.equal(greeting[ASYNC_SIGNAL], true);
+  assert.equal(greeting[ASYNC_SIGNAL_IMMEDIATE], undefined);
   assert.equal(greeting.loader, loader);
   assert.equal(greeting.options.immediate, false);
-  assert.equal(profile[RESOURCE], true);
-  assert.equal(profile[RESOURCE_IMMEDIATE], true);
-  assert.equal(compatibility[RESOURCE], true);
-  assert.equal(explicitCompatibility[RESOURCE], true);
-  assert.equal(isResource(greeting), true);
-  assert.equal(isImmediateResource(greeting), false);
-  assert.equal(isImmediateResource(profile), true);
+  assert.equal(profile[ASYNC_SIGNAL], true);
+  assert.equal(profile[ASYNC_SIGNAL_IMMEDIATE], true);
+  assert.equal(isAsyncSignal(greeting), true);
+  assert.equal(isImmediateAsyncSignal(greeting), false);
+  assert.equal(isImmediateAsyncSignal(profile), true);
+});
+
+test("async signal subpath exposes only async signal names", async () => {
+  const api = await import("@async/flow/async-signal");
+
+  assert.equal(typeof api.ASYNC_SIGNAL, "symbol");
+  assert.equal(typeof api.ASYNC_SIGNAL_IMMEDIATE, "symbol");
+  assert.equal(typeof api.asyncSignal, "function");
+  assert.equal(typeof api.createAsyncSignal, "function");
+  assert.equal(typeof api.defineAsyncSignal, "function");
+  assert.equal(typeof api.isAsyncSignal, "function");
+  assert.equal(typeof api.isAsyncSignalDefinition, "function");
+  assert.equal(typeof api.isImmediateAsyncSignal, "function");
 });
 
 test("createAsyncSignal is lazy by default and loads from idle loading ready and error", async () => {
@@ -126,7 +132,7 @@ test("reload aborts current work and stale completions do not overwrite state", 
   ]);
 });
 
-test("set updates resource value without running the loader", () => {
+test("set updates async signal value without running the loader", () => {
   let calls = 0;
   const api = createAsyncSignal(async () => {
     calls += 1;
@@ -195,38 +201,38 @@ test("loaders receive configured explicit args and receiver context", async () =
   ]);
 });
 
-test("lazy async signals read as values in store and expose controllers through refs and resources", async () => {
+test("lazy async signals read as values in store and expose controllers through refs and asyncSignals", async () => {
   const greetingFlow = flow({
     store: {
       name: "World",
       greeting: asyncSignal(async function () {
         const name = this.store.name;
         assert.equal(this.signal instanceof AbortSignal, true);
-        assert.equal(this.refs.greeting, this.resources.greeting);
+        assert.equal(this.refs.greeting, this.asyncSignals.greeting);
         assert.equal(this.name, "greeting");
         return `Hello ${name}`;
       })
     },
     on: {
       fetch() {
-        return this.resources.greeting.load();
+        return this.asyncSignals.greeting.load();
       },
       retry() {
-        return this.resources.greeting.reload();
+        return this.asyncSignals.greeting.reload();
       },
       replace(store, input) {
         store.greeting = input.value;
         return store.greeting;
       },
       cancel(store) {
-        return this.resources.greeting.cancel();
+        return this.asyncSignals.greeting.cancel();
       }
     }
   });
 
   assert.equal(greetingFlow.store.greeting, undefined);
   assert.equal(greetingFlow.refs.greeting.kind, "asyncSignal");
-  assert.equal(greetingFlow.resources.greeting, greetingFlow.refs.greeting);
+  assert.equal(greetingFlow.asyncSignals.greeting, greetingFlow.refs.greeting);
   assert.equal(await greetingFlow.fetch(), "Hello World");
   assert.equal(greetingFlow.store.greeting, "Hello World");
   assert.equal(await greetingFlow.retry(), "Hello World");
@@ -344,7 +350,7 @@ test("async signal lifecycle getters track computed store values", async () => {
   assert.deepEqual(values, ["Ada", "Grace"]);
 });
 
-test("immediate async signals are value-like in store and controller-like through refs and resources", async () => {
+test("immediate async signals are value-like in store and controller-like through refs and asyncSignals", async () => {
   let calls = 0;
   const profile = flow({
     store: {
@@ -358,12 +364,12 @@ test("immediate async signals are value-like in store and controller-like throug
         return this.refs.user.reload();
       },
       setUser(_store, input) {
-        return this.resources.user.set(input.name);
+        return this.asyncSignals.user.set(input.name);
       }
     }
   });
 
-  assert.equal(profile.refs.user, profile.resources.user);
+  assert.equal(profile.refs.user, profile.asyncSignals.user);
   assert.equal(profile.refs.user.status, "loading");
   assert.equal(profile.store.user, undefined);
   assert.equal(await profile.refs.user.load(), "Ada 1");
@@ -376,7 +382,7 @@ test("immediate async signals are value-like in store and controller-like throug
   assert.equal(profile.refs.user.value, "direct");
 });
 
-test("resource snapshot and restore preserve lifecycle state", async () => {
+test("async signal snapshot and restore preserve lifecycle state", async () => {
   const first = flow({
     store: {
       greeting: asyncSignal(async () => "Hello")
@@ -402,14 +408,6 @@ test("resource snapshot and restore preserve lifecycle state", async () => {
   second.restore(snapshot);
   assert.equal(second.refs.greeting.status, "ready");
   assert.equal(second.store.greeting, "Hello");
-});
-
-test("createResource remains a compatibility alias for createAsyncSignal", async () => {
-  const api = createResource(async () => "compat");
-
-  assert.equal(api.kind, "asyncSignal");
-  assert.equal(await api.load(), "compat");
-  assert.equal(api.get(), "compat");
 });
 
 test("invalid configured async signal arguments throw clear errors", async () => {
