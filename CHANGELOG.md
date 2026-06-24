@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-06-24
+
 ### Breaking Changes
 
 - `status(...)` now creates a live signal-based status ref. Use
