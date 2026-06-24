@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-06-24
 
 - Added explicit compose availability metadata with `AVAILABILITY`,
   `when(..., { availability: true })`, and leading-gate lifting into
