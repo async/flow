@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-06-25
+
+### Breaking Changes
+
+- Whole-flow subscribers now receive full public store snapshots in
+  `change.store` instead of sparse changed-key patches.
+
+### Added
+
+- Added the opt-in `@async/flow/graph` subpath with `toGraph(...)` and
+  `toMermaid(...)` for runtime graph metadata and Mermaid state diagrams.
+- Added the opt-in `@async/flow/builder` subpath with `toFlowConfig(...)` for
+  compiling declarative `store` plus `on` graphs into ordinary Flow config.
+- Added builder support for named handler registries, external signal guards,
+  transitions, handlers, set, dispatch, after, and parallel steps.
+- Documented projected handler methods and target-first dispatch as the
+  preferred authoring model for known events and dynamic routing.
+
 ## 0.7.0 - 2026-06-24
 
 ### Breaking Changes

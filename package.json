@@ -1,6 +1,6 @@
 {
   "name": "@async/flow",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Portable store, async signal, and handler runtime for Async packages.",
   "license": "MIT",
   "type": "module",
