@@ -58,10 +58,21 @@ helpers are import-safe and do not create shared live state at module load time.
 Use the current entrypoints in new code:
 
 ```text
-flow(...)                 live Flow instance
-compose([...])            ordered handler pipeline
-dispatch("event", input)  reusable deferred sender
-dispatch(target, "event") immediate event-sink dispatch
-status(...)               live signal-based status ref
-defineStatus(...)         pure status declaration
+flow(...)                  live Flow instance
+instance.event(input)      projected handler method
+compose([...])             ordered handler pipeline
+dispatch("event", input)   reusable deferred sender
+dispatch(target, "event")  immediate event-sink dispatch
+@async/flow/graph          opt-in runtime graph helpers
+@async/flow/builder        opt-in graph-to-config compiler
+status(...)                live signal-based status ref
+defineStatus(...)          pure status declaration
 ```
+
+The graph subpath exports `toGraph(targetOrInspection, options?)` and
+`toMermaid(graph, options?)`. It is intentionally separate from the root
+entrypoint.
+
+The builder subpath exports `toFlowConfig(graph, bindings?, options?)`. It
+compiles a declarative `store` plus `on` graph into ordinary Flow config while
+binding named `handlers` and external `signals` separately.

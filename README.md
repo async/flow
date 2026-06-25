@@ -25,7 +25,7 @@ pnpm add @async/flow
 ## Quick Start
 
 ```js
-import { flow, status } from "@async/flow";
+import { dispatch, flow, status } from "@async/flow";
 
 const counter = flow({
   store: {
@@ -46,22 +46,91 @@ const counter = flow({
   }
 });
 
-counter.dispatch("increment", { by: 2 });
+counter.increment({ by: 2 });
 
 counter.count; // 2
 counter.phase; // "active"
+
+dispatch(counter, "reset");
+
+counter.count; // 0
+counter.phase; // "idle"
 ```
 
 A Flow instance combines:
 
 - `store`: author-facing values with getter/setter behavior.
 - `_`: non-enumerable internal controller namespace for `_` store fields.
-- `dispatch(name, input)`: event execution.
+- Handler methods from `on`, such as `counter.increment(input)`.
+- `dispatch(name, input?)`: dynamic event execution on this Flow instance.
+- `subscribe(fn)`: whole-flow change records with `{ name, input, store }`.
 - `explain(name, input?)`: structured blocked-event reasons.
 
 The package also provides `compose(...)`, `parallel(...)`, and `remember(...)`
 for ordered handler steps. Use imported `can(...)` for event availability and
 imported `inspect(...)` for public metadata snapshots.
+
+## Store-Style Events
+
+Every `on` handler is projected onto the Flow instance as a method. Whole-flow
+subscribers receive one batched change record after each handler dispatch, and
+`change.store` contains the public store snapshot after the handler completes.
+
+```js
+import { dispatch, flow } from "@async/flow";
+
+function createDonutStore() {
+  return flow({
+    store: {
+      donuts: 0,
+      favoriteFlavor: "chocolate"
+    },
+
+    on: {
+      addDonut(store) {
+        store.donuts += 1;
+      },
+
+      changeFlavor(store, event) {
+        store.favoriteFlavor = event.flavor;
+      },
+
+      eatAllDonuts(store) {
+        store.donuts = 0;
+      }
+    }
+  });
+}
+
+const donutStore = createDonutStore();
+
+donutStore.subscribe((change) => {
+  console.log(change.store);
+});
+
+donutStore.addDonut();
+// logs { donuts: 1, favoriteFlavor: "chocolate" }
+
+donutStore.changeFlavor({ flavor: "strawberry" });
+// logs { donuts: 1, favoriteFlavor: "strawberry" }
+
+const routedDonutStore = createDonutStore();
+
+routedDonutStore.subscribe((change) => {
+  console.log(change.store);
+});
+
+dispatch(routedDonutStore, "addDonut");
+// logs { donuts: 1, favoriteFlavor: "chocolate" }
+
+dispatch(routedDonutStore, "changeFlavor", { flavor: "strawberry" });
+// logs { donuts: 1, favoriteFlavor: "strawberry" }
+```
+
+Use direct methods when the event is known at author time. Use target-first
+`dispatch(target, eventName, input?)` when an adapter receives the target or
+event name dynamically, or when the same sender should work with different event
+sinks.
 
 ## Store Values
 
@@ -93,7 +162,7 @@ const cart = flow({
   }
 });
 
-cart.dispatch("add", { item: { id: "sku_123" } });
+cart.add({ item: { id: "sku_123" } });
 
 cart.count; // 1
 cart.items; // [{ id: "sku_123" }]
@@ -238,7 +307,9 @@ More detail: [Compose And Status Helpers](docs/compose-and-status.md).
 
 `dispatch("event", payload?)` creates a reusable deferred sender. In a composed
 Flow handler it dispatches to the current Flow receiver; outside Flow it can be
-sent to any supported event sink.
+sent to any supported event sink. When the target is already a Flow instance and
+the event is known, `checkout.ready(input)` is the direct equivalent of
+`dispatch(checkout, "ready", input)`.
 
 ```js
 const ready = dispatch("ready", { id: 1 });
@@ -388,6 +459,32 @@ import {
   status,
   when
 } from "@async/flow";
+```
+
+Graph helpers live in an opt-in subpath and are not re-exported from the root
+entrypoint:
+
+```js
+import { toGraph, toMermaid } from "@async/flow/graph";
+```
+
+Builder helpers also live in an opt-in subpath. Use them when a graph
+declaration should compile into ordinary Flow config while implementation
+details come from handler and signal registries:
+
+```js
+import { flow } from "@async/flow";
+import { toFlowConfig } from "@async/flow/builder";
+
+const payment = flow(toFlowConfig(paymentGraph, {
+  handlers: {
+    canSubmit,
+    chargePayment
+  },
+  signals: {
+    isOnline
+  }
+}));
 ```
 
 ## Docs

@@ -56,6 +56,16 @@
       "types": "./src/scheduler.d.ts",
       "import": "./src/scheduler.js",
       "default": "./src/scheduler.js"
+    },
+    "./graph": {
+      "types": "./src/graph.d.ts",
+      "import": "./src/graph.js",
+      "default": "./src/graph.js"
+    },
+    "./builder": {
+      "types": "./src/builder.d.ts",
+      "import": "./src/builder.js",
+      "default": "./src/builder.js"
     }
   },
   "scripts": {

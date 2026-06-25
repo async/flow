@@ -208,7 +208,13 @@ test("top-level flow uses the current default scheduler at creation time", async
     counter.increment();
     assert.deepEqual(changes, []);
     await queuedScheduler.flush();
-    assert.deepEqual(changes, [{ store: { count: 1 } }]);
+    assert.deepEqual(changes, [
+      {
+        store: {
+          count: 1
+        }
+      }
+    ]);
   } finally {
     resetDefaultScheduler();
   }

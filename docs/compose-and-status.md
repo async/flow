@@ -182,7 +182,14 @@ ready.emit(emitter);
 ready.send(sender);
 ```
 
-Use target-first dispatch for immediate sends:
+Use direct handler methods when the Flow event is known at author time:
+
+```js
+checkout.submit({ form });
+```
+
+Use target-first dispatch for immediate sends when the target or event name is
+dynamic:
 
 ```js
 dispatch(checkout, "ready", { id: 1 });

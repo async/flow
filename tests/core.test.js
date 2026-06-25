@@ -338,12 +338,13 @@ test("handler arrays are invalid and returned objects update writable store valu
   assert.throws(() => counter.writeComputed(), /read-only/);
 });
 
-test("whole-flow subscribers receive batched change records", () => {
+test("whole-flow subscribers receive batched full-store change records", () => {
   const changes = [];
   const checkout = flow({
     store: {
       loading: false,
-      orderId: null
+      orderId: null,
+      message: "ready"
     },
     on: {
       submit: (store, input) => ({
@@ -362,7 +363,8 @@ test("whole-flow subscribers receive batched change records", () => {
       input: { orderId: "ord_123" },
       store: {
         loading: true,
-        orderId: "ord_123"
+        orderId: "ord_123",
+        message: "ready"
       }
     }
   ]);

@@ -112,7 +112,9 @@ test("Flow compose continuations resume in a fresh batched segment after async b
       name: "submit",
       input: { orderId: "ord_123" },
       store: {
-        loading: true
+        loading: true,
+        orderId: null,
+        complete: false
       }
     }
   ]);
@@ -124,13 +126,16 @@ test("Flow compose continuations resume in a fresh batched segment after async b
       name: "submit",
       input: { orderId: "ord_123" },
       store: {
-        loading: true
+        loading: true,
+        orderId: null,
+        complete: false
       }
     },
     {
       name: "submit",
       input: { orderId: "ord_123" },
       store: {
+        loading: true,
         orderId: "ord_123",
         complete: true
       }

@@ -89,7 +89,7 @@ L2 adds named events, handler batching, snapshots, receiver capabilities, and
 finite status values. Handlers are still just functions.
 
 ```js
-import { flow, status } from "@async/flow";
+import { dispatch, flow, status } from "@async/flow";
 
 const counter = flow({
   store: {
@@ -110,7 +110,8 @@ const counter = flow({
   }
 });
 
-counter.dispatch("increment", { by: 2 });
+counter.increment({ by: 2 });
+dispatch(counter, "reset");
 ```
 
 Choose L2 when:
@@ -118,6 +119,10 @@ Choose L2 when:
 - State changes should be named actions such as `increment`, `fetch`, or
   `submit`.
 - Subscribers should see batched handler changes.
+- Author code should call known events directly, such as
+  `checkout.submit(input)`.
+- Adapters need target-first `dispatch(target, eventName, input?)` for dynamic
+  event routing.
 - Handlers need `this.dispatch(...)`, `this.after(...)`, internal controllers,
   or injected runtime context.
 - UI controls or adapters need imported `can(...)`, `explain(...)`, or

@@ -801,7 +801,7 @@ export function createFlow(definitionOrConfig, options = {}) {
   });
 
   for (const [name, ref] of Object.entries(refs)) {
-    refStops.push(ref.subscribe((value) => recordChange(name, value)));
+    refStops.push(ref.subscribe(() => recordChange()));
   }
 
   for (const [name, asyncSignalRef] of Object.entries(asyncSignals)) {
@@ -809,7 +809,7 @@ export function createFlow(definitionOrConfig, options = {}) {
       continue;
     }
 
-    refStops.push(asyncSignalRef.subscribe(() => recordChange(name, store[name])));
+    refStops.push(asyncSignalRef.subscribe(() => recordChange()));
   }
 
   for (const [name, handler] of Object.entries(definition.on)) {
@@ -1154,7 +1154,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     const batch = {
       name,
       input,
-      store: {}
+      changed: false
     };
     activeBatch = batch;
 
@@ -1165,27 +1165,25 @@ export function createFlow(definitionOrConfig, options = {}) {
       activeBatch = previousBatch;
     }
 
-    if (Object.keys(batch.store).length > 0) {
+    if (batch.changed) {
       notifyWholeSubscribers({
         name,
         input,
-        store: batch.store
+        store: storeState.snapshot()
       });
     }
 
     return result;
   }
 
-  function recordChange(name, value) {
+  function recordChange() {
     if (activeBatch) {
-      activeBatch.store[name] = value;
+      activeBatch.changed = true;
       return;
     }
 
     notifyWholeSubscribers({
-      store: {
-        [name]: value
-      }
+      store: storeState.snapshot()
     });
   }
 
