@@ -1,8 +1,12 @@
-export declare const SIGNAL: unique symbol;
-export declare const STATUS: unique symbol;
-export declare const COMPUTED: unique symbol;
-export declare const ASYNC_SIGNAL: unique symbol;
-export declare const ASYNC_SIGNAL_IMMEDIATE: unique symbol;
+import { ASYNC_SIGNAL, ASYNC_SIGNAL_IMMEDIATE, STATUS } from "./protocol.js";
+
+export {
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
+  COMPUTED,
+  SIGNAL,
+  STATUS
+} from "./protocol.js";
 
 export type FlowSignalDefinition<T = unknown> = {
   readonly type: "async.flow.signal";

@@ -1,4 +1,6 @@
-export const FLOW_GRAPH_KIND: "@async/flow.graph";
+import { FLOW_GRAPH, FLOW_GRAPH_KIND } from "./protocol.js";
+
+export { FLOW_GRAPH, FLOW_GRAPH_KIND } from "./protocol.js";
 
 export type FlowGraphOptions = {
   readonly name?: string;
@@ -42,6 +44,7 @@ export type FlowGraphEvent = {
 };
 
 export type FlowGraph = {
+  readonly [FLOW_GRAPH]?: true;
   readonly kind: typeof FLOW_GRAPH_KIND;
   readonly version: 1;
   readonly name?: string;

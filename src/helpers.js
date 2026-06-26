@@ -1,13 +1,23 @@
 import { COMPUTED, SIGNAL, STATUS, defineComputed, isComputedDefinition, isPlainObject } from "./define.js";
 import { FLOW_INSPECT, FLOW_INSTANCE, createComputed as createLiveComputed, createStatus } from "./runtime.js";
 import { createComposeStop, isPromiseLike } from "./compose.js";
+import {
+  AVAILABILITY,
+  GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
+  TRANSITION
+} from "./protocol.js";
 
-export const TRANSITION = Symbol.for("@async/flow.transition");
-export const GUARD = Symbol.for("@async/flow.guard");
-export const AVAILABILITY = Symbol.for("@async/flow.availability");
-export const STANDALONE_TRANSITION = Symbol.for("@async/flow.standaloneTransition");
-export const STANDALONE_AFTER = Symbol.for("@async/flow.standaloneAfter");
-export const STANDALONE_DISPATCH = Symbol.for("@async/flow.standaloneDispatch");
+export {
+  AVAILABILITY,
+  GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
+  TRANSITION
+};
 
 export const status = createStatus;
 

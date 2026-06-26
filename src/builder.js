@@ -1,6 +1,6 @@
 import { compose, parallel } from "./compose.js";
 import { defineSignal, defineStatus, isPlainObject } from "./define.js";
-import { after, dispatch, set, transition, when } from "./helpers.js";
+import { after, dispatch, set, transition, when } from "./helpers/core.js";
 
 export function toFlowConfig(graph, bindings = {}, options = {}) {
   assertGraph(graph);

@@ -1,11 +1,12 @@
+import { FLOW_INSPECT, FLOW_INSTANCE } from "./protocol.js";
+
 export type FlowScheduler = {
   batch<T>(fn: () => T): T;
   enqueue?(fn: () => void): void;
   flush?(): Promise<void>;
 };
 
-export declare const FLOW_INSTANCE: unique symbol;
-export declare const FLOW_INSPECT: unique symbol;
+export { FLOW_INSPECT, FLOW_INSTANCE } from "./protocol.js";
 
 export type Signal<T = unknown> = {
   readonly type: "signal";

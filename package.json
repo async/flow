@@ -1,6 +1,6 @@
 {
   "name": "@async/flow",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Portable store, async signal, and handler runtime for Async packages.",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,11 @@
       "types": "./src/index.d.ts",
       "import": "./src/index.js",
       "default": "./src/index.js"
+    },
+    "./protocol": {
+      "types": "./src/protocol.d.ts",
+      "import": "./src/protocol.js",
+      "default": "./src/protocol.js"
     },
     "./define": {
       "types": "./src/define.d.ts",

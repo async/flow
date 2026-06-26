@@ -1,3 +1,5 @@
+export { COMPOSE_BATCH } from "./protocol.js";
+
 export type MaybePromise<T> = T | PromiseLike<T>;
 export type Step<TStore = Record<string, unknown>, TInput = unknown, TResult = unknown> = (
   this: unknown,

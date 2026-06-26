@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.10.0 - 2026-06-26
+
+### Added
+
+- Added `@async/flow/protocol` as the shared symbol-brand subpath for Flow
+  definitions, live instances, helper metadata, compose batching, and graph
+  objects.
+
+### Changed
+
+- Made `@async/flow/graph` consume Flow instances through the `FLOW_INSPECT`
+  protocol symbol instead of importing helper APIs.
+- Made `@async/flow/builder` compile through the scheduler-free helper layer so
+  graph-to-config compilation does not pull in the default scheduler wrapper.
+
 ## 0.9.0 - 2026-06-26
 
 ### Added

@@ -15,6 +15,8 @@ Pick the smallest layer that solves the problem:
   needs ordered or fan-out/fan-in work without a full helper vocabulary.
 - L3 steps: use `set(...)`, `when(...)`, `branch(...)`, `dispatch(...)`, and
   `after(...)` when repeated workflow wiring should read as reusable steps.
+- Protocol brands: use `@async/flow/protocol` when two layers need to recognize
+  Flow objects without importing each other.
 
 ## Install
 
@@ -462,10 +464,17 @@ import {
 ```
 
 Graph helpers live in an opt-in subpath and are not re-exported from the root
-entrypoint:
+entrypoint. They consume Flow instances through the shared inspection symbol
+rather than importing runtime helpers:
 
 ```js
 import { toGraph, toMermaid } from "@async/flow/graph";
+```
+
+Protocol symbols live in a tiny shared subpath:
+
+```js
+import { FLOW_INSPECT, ASYNC_SIGNAL } from "@async/flow/protocol";
 ```
 
 Framework integrations that provide their own scheduler can use the

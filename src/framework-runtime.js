@@ -14,11 +14,9 @@ import {
   isStatusDefinition
 } from "./define.js";
 import { COMPOSE_BATCH, isPromiseLike } from "./compose.js";
+import { FLOW_INSPECT, FLOW_INSTANCE, GUARD, TRANSITION } from "./protocol.js";
 
-const TRANSITION = Symbol.for("@async/flow.transition");
-const GUARD = Symbol.for("@async/flow.guard");
-export const FLOW_INSTANCE = Symbol.for("@async/flow.instance");
-export const FLOW_INSPECT = Symbol.for("@async/flow.inspect");
+export { FLOW_INSPECT, FLOW_INSTANCE };
 
 const RESERVED_INSTANCE_NAMES = new Set([
   "_",

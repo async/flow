@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { flow, inspect, status, transition } from "@async/flow";
-import { FLOW_GRAPH_KIND, toGraph, toMermaid } from "@async/flow/graph";
+import { FLOW_GRAPH, FLOW_GRAPH_KIND, toGraph, toMermaid } from "@async/flow/graph";
 
 function createPaymentFlow() {
   return flow({
@@ -32,6 +33,7 @@ test("toGraph builds status lanes and event transitions from a Flow instance", (
   const payment = createPaymentFlow();
   const graph = toGraph(payment, { name: "payment" });
 
+  assert.equal(graph[FLOW_GRAPH], true);
   assert.equal(graph.kind, FLOW_GRAPH_KIND);
   assert.equal(graph.version, 1);
   assert.equal(graph.name, "payment");
@@ -68,6 +70,14 @@ test("toGraph builds status lanes and event transitions from a Flow instance", (
       to: "cash"
     }
   ]);
+});
+
+test("graph subpath reads Flow instances by protocol without helper imports", async () => {
+  const source = await readFile(new URL("../src/graph.js", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /from "\.\/helpers\.js"/);
+  assert.doesNotMatch(source, /from "\.\/runtime\.js"/);
+  assert.doesNotMatch(source, /from "\.\/framework-runtime\.js"/);
 });
 
 test("toGraph accepts an inspection object", () => {

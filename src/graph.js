@@ -1,17 +1,17 @@
-import { inspect } from "./helpers.js";
+import { FLOW_GRAPH, FLOW_GRAPH_KIND, FLOW_INSPECT } from "./protocol.js";
 
-export const FLOW_GRAPH_KIND = "@async/flow.graph";
+export { FLOW_GRAPH, FLOW_GRAPH_KIND };
 
 export function toGraph(targetOrInspection, options = {}) {
   assertOptions(options, "toGraph");
 
-  if (targetOrInspection?.kind === FLOW_GRAPH_KIND) {
+  if (isFlowGraph(targetOrInspection)) {
     return targetOrInspection;
   }
 
   const description = isFlowInspection(targetOrInspection)
     ? targetOrInspection
-    : inspect(targetOrInspection);
+    : readFlowInspection(targetOrInspection);
 
   assertFlowInspection(description);
 
@@ -99,13 +99,13 @@ export function toGraph(targetOrInspection, options = {}) {
     graph.name = options.name;
   }
 
-  return graph;
+  return brandGraph(graph);
 }
 
 export function toMermaid(graph, options = {}) {
   assertOptions(options, "toMermaid");
 
-  if (graph?.kind !== FLOW_GRAPH_KIND) {
+  if (!isFlowGraph(graph)) {
     throw new TypeError("toMermaid(...) requires a Flow graph.");
   }
 
@@ -161,6 +161,24 @@ function assertFlowInspection(value) {
   if (!isFlowInspection(value)) {
     throw new TypeError("toGraph(...) requires a Flow instance or Flow inspection object.");
   }
+}
+
+function readFlowInspection(value) {
+  const inspect = value?.[FLOW_INSPECT];
+  return typeof inspect === "function" ? inspect.call(value) : undefined;
+}
+
+function isFlowGraph(value) {
+  return Boolean(value?.[FLOW_GRAPH]) || value?.kind === FLOW_GRAPH_KIND;
+}
+
+function brandGraph(graph) {
+  Object.defineProperty(graph, FLOW_GRAPH, {
+    configurable: false,
+    enumerable: false,
+    value: true
+  });
+  return graph;
 }
 
 function isFlowInspection(value) {

@@ -1,14 +1,24 @@
+import {
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
+  COMPUTED,
+  SIGNAL,
+  STATUS
+} from "./protocol.js";
+
 export const FLOW_DEFINITION = "async.flow.definition";
 export const SIGNAL_DEFINITION = "async.flow.signal";
 export const COMPUTED_DEFINITION = "async.flow.computed";
 export const STATUS_DEFINITION = "async.flow.status";
 export const ASYNC_SIGNAL_DEFINITION = "async.flow.asyncSignal";
 
-export const SIGNAL = Symbol.for("@async/flow.signal");
-export const STATUS = Symbol.for("@async/flow.status");
-export const COMPUTED = Symbol.for("@async/flow.computed");
-export const ASYNC_SIGNAL = Symbol.for("@async/flow.asyncSignal");
-export const ASYNC_SIGNAL_IMMEDIATE = Symbol.for("@async/flow.asyncSignal.immediate");
+export {
+  ASYNC_SIGNAL,
+  ASYNC_SIGNAL_IMMEDIATE,
+  COMPUTED,
+  SIGNAL,
+  STATUS
+};
 
 export function defineSignal(initial) {
   return {

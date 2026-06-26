@@ -65,6 +65,7 @@ dispatch("event", input)   reusable deferred sender
 dispatch(target, "event")  immediate event-sink dispatch
 @async/flow/graph          opt-in runtime graph helpers
 @async/flow/builder        opt-in graph-to-config compiler
+@async/flow/protocol       shared Symbol.for brands for layer interop
 @async/flow/framework-runtime
                            scheduler-free runtime for framework integrations
 @async/flow/helpers/core   scheduler-free helper imports for framework integrations
@@ -74,7 +75,8 @@ defineStatus(...)          pure status declaration
 
 The graph subpath exports `toGraph(targetOrInspection, options?)` and
 `toMermaid(graph, options?)`. It is intentionally separate from the root
-entrypoint.
+entrypoint and reads Flow instances through the shared `FLOW_INSPECT` protocol
+symbol.
 
 The builder subpath exports `toFlowConfig(graph, bindings?, options?)`. It
 compiles a declarative `store` plus `on` graph into ordinary Flow config while

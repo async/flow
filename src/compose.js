@@ -1,7 +1,8 @@
+import { AVAILABILITY, COMPOSE_BATCH, GUARD } from "./protocol.js";
+
 const COMPOSE_STOP = Symbol("async.flow.compose.stop");
-const AVAILABILITY = Symbol.for("@async/flow.availability");
-const GUARD = Symbol.for("@async/flow.guard");
-export const COMPOSE_BATCH = Symbol.for("@async/flow.compose.batch");
+
+export { COMPOSE_BATCH };
 
 export function compose(stepOrSteps) {
   const steps = Array.isArray(stepOrSteps) ? stepOrSteps : [stepOrSteps];

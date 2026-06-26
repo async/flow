@@ -1,12 +1,22 @@
+import {
+  AVAILABILITY,
+  GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
+  TRANSITION
+} from "./protocol.js";
 import type { Computed, FlowHandler, FlowHandlerReceiver, FlowInstance, Signal, Status } from "./runtime.js";
 import type { FlowComputedDefinition } from "./define.js";
 
-export const TRANSITION: unique symbol;
-export const GUARD: unique symbol;
-export const AVAILABILITY: unique symbol;
-export const STANDALONE_TRANSITION: unique symbol;
-export const STANDALONE_AFTER: unique symbol;
-export const STANDALONE_DISPATCH: unique symbol;
+export {
+  AVAILABILITY,
+  GUARD,
+  STANDALONE_AFTER,
+  STANDALONE_DISPATCH,
+  STANDALONE_TRANSITION,
+  TRANSITION
+} from "./protocol.js";
 export const status: typeof import("./runtime.js").createStatus;
 export type FlowMetadataOptions = {
   reason?: string;
