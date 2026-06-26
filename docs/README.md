@@ -65,6 +65,9 @@ dispatch("event", input)   reusable deferred sender
 dispatch(target, "event")  immediate event-sink dispatch
 @async/flow/graph          opt-in runtime graph helpers
 @async/flow/builder        opt-in graph-to-config compiler
+@async/flow/framework-runtime
+                           scheduler-free runtime for framework integrations
+@async/flow/helpers/core   scheduler-free helper imports for framework integrations
 status(...)                live signal-based status ref
 defineStatus(...)          pure status declaration
 ```

@@ -1,6 +1,6 @@
 {
   "name": "@async/flow",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Portable store, async signal, and handler runtime for Async packages.",
   "license": "MIT",
   "type": "module",
@@ -32,6 +32,11 @@
       "import": "./src/runtime.js",
       "default": "./src/runtime.js"
     },
+    "./framework-runtime": {
+      "types": "./src/framework-runtime.d.ts",
+      "import": "./src/framework-runtime.js",
+      "default": "./src/framework-runtime.js"
+    },
     "./async-signal": {
       "types": "./src/async-signal.d.ts",
       "import": "./src/async-signal.js",
@@ -46,6 +51,11 @@
       "types": "./src/helpers.d.ts",
       "import": "./src/helpers.js",
       "default": "./src/helpers.js"
+    },
+    "./helpers/core": {
+      "types": "./src/helpers/core.d.ts",
+      "import": "./src/helpers/core.js",
+      "default": "./src/helpers/core.js"
     },
     "./steps": {
       "types": "./src/steps.d.ts",

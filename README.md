@@ -468,6 +468,14 @@ entrypoint:
 import { toGraph, toMermaid } from "@async/flow/graph";
 ```
 
+Framework integrations that provide their own scheduler can use the
+scheduler-free runtime and helper subpaths:
+
+```js
+import { createFlow } from "@async/flow/framework-runtime";
+import { set, update, when, onError } from "@async/flow/helpers/core";
+```
+
 Builder helpers also live in an opt-in subpath. Use them when a graph
 declaration should compile into ordinary Flow config while implementation
 details come from handler and signal registries:

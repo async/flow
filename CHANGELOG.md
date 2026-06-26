@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-06-26
+
+### Added
+
+- Added scheduler-free integration subpaths for framework adapters:
+  `@async/flow/framework-runtime` and `@async/flow/helpers/core`.
+
 ## 0.8.0 - 2026-06-25
 
 ### Breaking Changes

@@ -11,6 +11,14 @@ import {
   resetDefaultScheduler,
   setDefaultScheduler
 } from "@async/flow";
+import {
+  createFlow as createFrameworkFlow,
+  createSignal as createFrameworkSignal
+} from "@async/flow/framework-runtime";
+import {
+  matches as frameworkMatches,
+  status as frameworkStatus,
+} from "@async/flow/helpers/core";
 
 test("standalone signal refs work without a provided scheduler", () => {
   const signal = createSignal(0);
@@ -218,4 +226,127 @@ test("top-level flow uses the current default scheduler at creation time", async
   } finally {
     resetDefaultScheduler();
   }
+});
+
+test("framework runtime subpath does not use the module default scheduler", async () => {
+  const defaultJobs = [];
+  const explicitJobs = [];
+  const queuedDefault = {
+    batch(fn) {
+      return fn();
+    },
+    enqueue(fn) {
+      defaultJobs.push(fn);
+    }
+  };
+  const explicit = {
+    batch(fn) {
+      return fn();
+    },
+    enqueue(fn) {
+      explicitJobs.push(fn);
+    },
+    async flush() {
+      while (explicitJobs.length) {
+        explicitJobs.shift()();
+      }
+    }
+  };
+
+  setDefaultScheduler(queuedDefault);
+
+  try {
+    const immediate = createFrameworkSignal(0);
+    const immediateValues = [];
+    immediate.subscribe((value) => immediateValues.push(value));
+    immediate.set(1);
+
+    assert.deepEqual(immediateValues, [1]);
+    assert.equal(defaultJobs.length, 0);
+
+    const scheduled = createFrameworkSignal(0, { scheduler: explicit });
+    const scheduledValues = [];
+    scheduled.subscribe((value) => scheduledValues.push(value));
+    scheduled.set(1);
+
+    assert.deepEqual(scheduledValues, []);
+    assert.equal(defaultJobs.length, 0);
+    assert.equal(explicitJobs.length, 1);
+    await explicit.flush();
+    assert.deepEqual(scheduledValues, [1]);
+  } finally {
+    resetDefaultScheduler();
+  }
+});
+
+test("framework helper core subpath stays on integration runtime primitives", () => {
+  const jobs = [];
+  const queuedDefault = {
+    batch(fn) {
+      return fn();
+    },
+    enqueue(fn) {
+      jobs.push(fn);
+    }
+  };
+
+  setDefaultScheduler(queuedDefault);
+
+  try {
+    const phase = frameworkStatus("idle", ["idle", "ready"]);
+    const available = frameworkMatches(phase, "ready");
+    const values = [];
+
+    available.subscribe((value) => values.push(value));
+    phase.set("ready");
+
+    assert.equal(available.value, true);
+    assert.deepEqual(values, [true]);
+    assert.equal(jobs.length, 0);
+  } finally {
+    resetDefaultScheduler();
+  }
+});
+
+test("framework runtime subpath passes explicit schedulers through Flow instances", async () => {
+  const jobs = [];
+  const scheduler = {
+    batch(fn) {
+      return fn();
+    },
+    enqueue(fn) {
+      jobs.push(fn);
+    },
+    async flush() {
+      while (jobs.length) {
+        jobs.shift()();
+      }
+    }
+  };
+  const counter = createFrameworkFlow(
+    {
+      store: {
+        count: 0
+      },
+      on: {
+        increment: (store) => ({ count: store.count + 1 })
+      }
+    },
+    { scheduler }
+  );
+  const changes = [];
+
+  counter.subscribe((change) => changes.push(change));
+  counter.increment();
+
+  assert.deepEqual(changes, []);
+  assert.equal(jobs.length, 1);
+  await scheduler.flush();
+  assert.deepEqual(changes, [
+    {
+      store: {
+        count: 1
+      }
+    }
+  ]);
 });
