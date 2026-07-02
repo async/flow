@@ -4,21 +4,18 @@ import { test } from "node:test";
 import * as helpers from "../src/helpers.js";
 import * as coreHelpers from "../src/helpers/core.js";
 
-test("helpers and helpers/core keep export and source parity", async () => {
+test("helpers and helpers/core use the shared helper implementation", async () => {
   assert.deepEqual(Object.keys(coreHelpers).sort(), Object.keys(helpers).sort());
 
-  const [helpersSource, coreSource] = await Promise.all([
+  const [helpersSource, coreSource, sharedSource] = await Promise.all([
     readFile(new URL("../src/helpers.js", import.meta.url), "utf8"),
-    readFile(new URL("../src/helpers/core.js", import.meta.url), "utf8")
+    readFile(new URL("../src/helpers/core.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/helpers/shared.js", import.meta.url), "utf8")
   ]);
 
-  assert.equal(normalizeHelperSource(coreSource), helpersSource);
+  assert.match(helpersSource, /createHelperExports/);
+  assert.match(coreSource, /createHelperExports/);
+  assert.match(sharedSource, /function set\(/);
+  assert.doesNotMatch(helpersSource, /function set\(/);
+  assert.doesNotMatch(coreSource, /function set\(/);
 });
-
-function normalizeHelperSource(source) {
-  return source
-    .replaceAll("../define.js", "./define.js")
-    .replaceAll("../framework-runtime.js", "./runtime.js")
-    .replaceAll("../compose.js", "./compose.js")
-    .replaceAll("../protocol.js", "./protocol.js");
-}
