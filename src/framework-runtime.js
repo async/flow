@@ -1439,22 +1439,31 @@ function createRefMutationView(ref, options, cache) {
 
   const view = new Proxy(ref, {
     get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+
       if (prop === "subscribe") {
+        if (typeof value !== "function") {
+          return value;
+        }
+
         return (fn) => {
           options.assertAlive();
-          const stop = target.subscribe(fn);
+          const stop = value.call(target, fn);
           return options.trackStop(stop);
         };
       }
 
       if (isRefMutationMethod(prop)) {
+        if (typeof value !== "function") {
+          return value;
+        }
+
         return (...args) => {
           options.assertAlive();
-          return options.mutate(() => target[prop](...args));
+          return options.mutate(() => value.apply(target, args));
         };
       }
 
-      const value = Reflect.get(target, prop, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },
 

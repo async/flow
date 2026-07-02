@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.10.2 - 2026-07-02
+
+### Fixed
+
+- Kept public Flow ref views from exposing mutation wrappers for read-only
+  computed refs so Framework and other consumers can reliably detect writable
+  refs.
+
 ## 0.10.1 - 2026-07-02
 
 ### Fixed

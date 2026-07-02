@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineAsyncSignal as asyncSignal } from "../src/define.js";
+import { defineAsyncSignal as asyncSignal, defineComputed as computed } from "../src/define.js";
 import { createFlow, createSignal } from "../src/framework-runtime.js";
 import { set } from "../src/helpers.js";
 
@@ -317,6 +317,27 @@ test("live signal declarations are adopted instead of copied into a split store 
   assert.equal(external.get(), 1);
   assert.equal(flow.count, 1);
   assert.equal(flow.refs.count.get(), 1);
+});
+
+test("public ref views expose mutation methods only for writable refs", () => {
+  const flow = createFlow({
+    store: {
+      items: [],
+      count: computed(function () {
+        return this.items.length;
+      })
+    }
+  });
+
+  assert.equal(typeof flow.refs.items.set, "function");
+  assert.equal(typeof flow.refs.items.update, "function");
+  assert.equal(flow.refs.count.set, undefined);
+  assert.equal(flow.refs.count.update, undefined);
+  assert.equal(flow.refs.count.restore, undefined);
+
+  assert.throws(() => {
+    flow.store.count = 1;
+  }, /read-only/);
 });
 
 test("handler receiver after validates target names before scheduling", () => {
