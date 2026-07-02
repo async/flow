@@ -1,4 +1,5 @@
 import { FLOW_INSPECT, FLOW_INSTANCE } from "./protocol.js";
+import type { FlowAsyncSignalDefinition } from "./define.js";
 
 export type FlowScheduler = {
   batch<T>(fn: () => T): T;
@@ -198,6 +199,10 @@ export function createComputed<T>(
 ): Computed<T>;
 export function createAsyncSignal<T = unknown, Input = unknown>(
   loader: (this: AsyncSignalReceiver, ...args: Input[]) => T | PromiseLike<T>,
+  runtimeOptions?: { scheduler?: FlowScheduler; name?: string }
+): AsyncSignal<T, Input>;
+export function createAsyncSignal<T = unknown, Input = unknown>(
+  definition: FlowAsyncSignalDefinition<T, Input>,
   runtimeOptions?: { scheduler?: FlowScheduler; name?: string }
 ): AsyncSignal<T, Input>;
 export function createAsyncSignal<T = unknown, Input = unknown>(

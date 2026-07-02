@@ -116,8 +116,8 @@ test("createStore normalizes values and exposes refs behind a store proxy", () =
   assert.equal(cart.store.isEmpty, false);
   assert.equal(cart.refs.selectedId.get(), "sku_123");
   assert.equal(cart.store.phase, "idle");
-  assert.equal(second.store.phase, "ready");
-  assert.equal(sharedPhase.get(), "ready");
+  assert.equal(second.store.phase, "idle");
+  assert.equal(sharedPhase.get(), "idle");
   assert.equal(cart.refs.phase[STATUS], true);
   assert.throws(() => {
     cart.store.count = 10;

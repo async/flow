@@ -96,7 +96,7 @@ test("standalone status transition can and matches helpers track live refs", () 
   assert.equal(canDrop.get(), false);
 });
 
-test("standalone after schedules callbacks and can be cancelled", async () => {
+test("standalone after schedules callbacks and registers receiver cleanup", async () => {
   const phase = status("idle", ["idle", "ready", "cancelled"]);
   const markReady = after(0, (next) => {
     phase.set(next);
@@ -110,15 +110,24 @@ test("standalone after schedules callbacks and can be cancelled", async () => {
   });
 
   const cancelReady = markReady();
-  assert.equal(typeof cancelReady, "function");
+  assert.equal(cancelReady, undefined);
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(phase.get(), "ready");
 
   const markCancelled = after(5, () => {
     phase.set("cancelled");
   });
-  const cancelCancelled = markCancelled();
-  cancelCancelled();
+  let cleanup;
+  const cancelCancelled = markCancelled.call({
+    dispose(nextCleanup) {
+      cleanup = nextCleanup;
+      return () => {
+        cleanup = undefined;
+      };
+    }
+  });
+  assert.equal(cancelCancelled, undefined);
+  cleanup();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(phase.get(), "ready");
 });
@@ -423,19 +432,69 @@ test("strict helpers work inside compose pipelines", () => {
   const checkout = flow({
     store: {
       step: status("shipping", ["shipping", "payment"]),
+      canNextForStep: can("step", "next"),
       moved: false
     },
     on: {
       next: compose([
-        transition("step", { shipping: "payment" }),
-        set("moved", true)
+        set("moved", true),
+        transition("step", { shipping: "payment" })
       ])
     }
+  });
+
+  assert.equal(checkout.store.canNextForStep, true);
+  assert.deepEqual(checkout.explain("next"), {
+    event: "next",
+    allowed: true,
+    reason: "allowed",
+    source: "transition",
+    status: "step",
+    current: "shipping",
+    next: "payment"
   });
 
   checkout.next();
   assert.equal(checkout.store.step, "payment");
   assert.equal(checkout.store.moved, true);
+  assert.equal(checkout.store.canNextForStep, false);
+});
+
+test("compose preserves sole guard metadata for event inspection", () => {
+  const checkout = flow({
+    store: {
+      ready: false,
+      submitted: false
+    },
+    on: {
+      submit: compose([
+        guard(
+          (store) => store.ready,
+          set("submitted", true),
+          { reason: "not_ready", label: "Ready" }
+        )
+      ])
+    }
+  });
+
+  assert.equal(can(checkout, "submit").get(), false);
+  assert.deepEqual(checkout.explain("submit"), {
+    event: "submit",
+    allowed: false,
+    reason: "not_ready",
+    source: "guard",
+    label: "Ready"
+  });
+
+  checkout.store.ready = true;
+  assert.equal(can(checkout, "submit").get(), true);
+  assert.deepEqual(checkout.explain("submit"), {
+    event: "submit",
+    allowed: true,
+    reason: "allowed",
+    source: "guard",
+    label: "Ready"
+  });
 });
 
 test("compose lifts leading availability gates into event inspection", () => {

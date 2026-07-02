@@ -15,7 +15,8 @@ Use these docs when the README is too compact:
 - [Compose And Status Helpers](compose-and-status.md): `compose`, `parallel`,
   `remember`, `set`, `update`, `when`, `after`, `branch`, `dispatch`,
   `onError`, `status`, `transition`, `guard`, `bool`, `every`, `some`,
-  `not`, `can`, `explain`, `inspect`, and `matches`.
+  `not`, `can`, `inspect`, and `matches`. Flow instances and handler receivers
+  expose `explain(...)` directly.
 
 ## API Layers
 
@@ -66,9 +67,16 @@ dispatch(target, "event")  immediate event-sink dispatch
 @async/flow/graph          opt-in runtime graph helpers
 @async/flow/builder        opt-in graph-to-config compiler
 @async/flow/protocol       shared Symbol.for brands for layer interop
+@async/flow/define         import-safe declaration helpers
+@async/flow/runtime        standalone runtime with the default scheduler
 @async/flow/framework-runtime
                            scheduler-free runtime for framework integrations
+@async/flow/compose        compose, parallel, and remember primitives
+@async/flow/helpers        standalone helper imports
 @async/flow/helpers/core   scheduler-free helper imports for framework integrations
+@async/flow/async-signal   async signal definitions and runtime helpers
+@async/flow/steps          compose-compatible step helpers
+@async/flow/scheduler      default scheduler controls
 status(...)                live signal-based status ref
 defineStatus(...)          pure status declaration
 ```

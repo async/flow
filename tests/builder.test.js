@@ -66,6 +66,16 @@ test("toFlowConfig compiles graph store on handlers and external signals", async
 
   assert.equal(payment.step, "review");
   assert.equal(can(payment, "submit", { payment: true }).get(), true);
+  assert.deepEqual(payment.explain("submit", { payment: true }), {
+    event: "submit",
+    allowed: true,
+    reason: "allowed",
+    source: "transition",
+    status: "step",
+    current: "review",
+    next: "submitted",
+    label: "Online"
+  });
 
   await payment.submit({ payment: "card", receipt: "email" });
 
@@ -84,6 +94,8 @@ test("toFlowConfig compiles graph store on handlers and external signals", async
     allowed: false,
     reason: "offline",
     source: "guard",
+    status: "step",
+    current: "review",
     label: "Online"
   });
   await payment.submit({ payment: "card", receipt: "email" });
@@ -105,6 +117,7 @@ test("compiled builder flows remain ordinary Flow instances", () => {
 
   assert.equal(typeof payment.submit, "function");
   assert.equal(graph.statuses.step.current, "review");
+  assert.equal(graph.events.submit.transitions[0].to, "submitted");
   assert.match(toMermaid(graph), /state "step" as step/);
 });
 

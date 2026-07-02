@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.10.1 - 2026-07-02
+
+### Fixed
+
+- Replaced Flow dispatch batching with dispatch-scoped batching so direct
+  mutations after awaited handlers stay attributed to the dispatch that owns
+  them, including concurrent dispatches.
+- Made whole-flow subscribers receive one named committed-state record after a
+  dispatch settles, including mutate-then-reject handlers.
+- Made `destroy()` terminal and idempotent for Flow instance APIs, public refs,
+  async signals, subscriptions, timers, and Flow-owned async work while keeping
+  final-state reads available.
+- Prevented unhandled process failures from immediate async-signal loaders,
+  timer-driven dispatches, standalone `after(...)` tasks, abandoned
+  `parallel(...)` branch promises, and throwing scheduled subscribers.
+- Made async-signal restore cancel in-flight loads before applying hydrated
+  state.
+- Adopted live signal and status refs declared in stores instead of copying
+  them into split-brain Flow-owned refs.
+- Preserved composed transition and guard metadata so `can(...)`,
+  `explain(...)`, builder output, and graph inspection stay truthful.
+
+### Changed
+
+- Added strict TypeScript consumer checks to `typecheck` for root and exported
+  subpaths.
+- Added a helpers parity guard for `@async/flow/helpers` and
+  `@async/flow/helpers/core`.
+- Documented stable public subpaths and removed `explain` from importable
+  helper lists.
+
 ## 0.10.0 - 2026-06-26
 
 ### Added

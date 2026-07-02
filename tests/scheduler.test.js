@@ -45,6 +45,46 @@ test("default scheduler batches and coalesces repeated writes", () => {
   assert.deepEqual(values, [2]);
 });
 
+test("default scheduler drains remaining jobs after a subscriber throws", () => {
+  const scheduler = createDefaultScheduler();
+  const first = createSignal(0, { scheduler });
+  const second = createSignal(0, { scheduler });
+  const values = [];
+  let shouldThrow = true;
+
+  first.subscribe((value) => {
+    values.push(["first", value]);
+
+    if (shouldThrow) {
+      shouldThrow = false;
+      throw new Error("subscriber failed");
+    }
+  });
+  second.subscribe((value) => {
+    values.push(["second", value]);
+  });
+
+  assert.throws(
+    () =>
+      scheduler.batch(() => {
+        first.set(1);
+        second.set(1);
+      }),
+    /subscriber failed/
+  );
+  assert.deepEqual(values, [
+    ["first", 1],
+    ["second", 1]
+  ]);
+
+  first.set(2);
+  assert.deepEqual(values, [
+    ["first", 1],
+    ["second", 1],
+    ["first", 2]
+  ]);
+});
+
 test("top-level APIs use the module-owned default scheduler for future creations", async () => {
   const jobs = [];
   const queuedScheduler = {
@@ -214,10 +254,21 @@ test("top-level flow uses the current default scheduler at creation time", async
     counter.subscribe((change) => changes.push(change));
 
     counter.increment();
-    assert.deepEqual(changes, []);
+    assert.deepEqual(changes, [
+      {
+        name: "increment",
+        input: undefined,
+        store: {
+          count: 1
+        }
+      }
+    ]);
+    assert.equal(jobs.length, 1);
     await queuedScheduler.flush();
     assert.deepEqual(changes, [
       {
+        name: "increment",
+        input: undefined,
         store: {
           count: 1
         }
@@ -339,11 +390,21 @@ test("framework runtime subpath passes explicit schedulers through Flow instance
   counter.subscribe((change) => changes.push(change));
   counter.increment();
 
-  assert.deepEqual(changes, []);
+  assert.deepEqual(changes, [
+    {
+      name: "increment",
+      input: undefined,
+      store: {
+        count: 1
+      }
+    }
+  ]);
   assert.equal(jobs.length, 1);
   await scheduler.flush();
   assert.deepEqual(changes, [
     {
+      name: "increment",
+      input: undefined,
       store: {
         count: 1
       }

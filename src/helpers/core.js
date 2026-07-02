@@ -574,12 +574,29 @@ function resolveDeferredDispatchPayload(payload, receiver, store, input, previou
 
 function createStandaloneAfter(ms, task, configuredInput) {
   const afterStep = function standaloneAfterStep(input) {
+    const receiver = this;
     const scheduledInput = configuredInput === undefined ? input : configuredInput;
+    let unregister;
     const timeout = setTimeout(() => {
-      task.call(this, scheduledInput);
-    }, ms);
+      unregister?.();
 
-    return () => clearTimeout(timeout);
+      try {
+        const result = task.call(receiver, scheduledInput);
+
+        if (isPromiseLike(result)) {
+          Promise.resolve(result).catch(sinkAsyncError);
+        }
+      } catch (error) {
+        sinkAsyncError(error);
+      }
+    }, ms);
+    const cleanup = () => clearTimeout(timeout);
+
+    if (typeof receiver?.dispose === "function") {
+      unregister = receiver.dispose(cleanup);
+    }
+
+    return undefined;
   };
 
   Object.defineProperty(afterStep, STANDALONE_AFTER, {
@@ -591,6 +608,8 @@ function createStandaloneAfter(ms, task, configuredInput) {
 
   return afterStep;
 }
+
+function sinkAsyncError() {}
 
 function assertEventName(value, helperName) {
   if (typeof value !== "string" || value.length === 0) {

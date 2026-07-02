@@ -2,8 +2,10 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 
 const root = new URL("..", import.meta.url).pathname;
+const require = createRequire(import.meta.url);
 const checks = [];
 
 function collect(dir) {
@@ -34,4 +36,15 @@ for (const file of checks) {
   }
 }
 
-console.log(`checked ${checks.length} JavaScript files`);
+const tsc = require.resolve("typescript/bin/tsc");
+const types = spawnSync(process.execPath, [tsc, "-p", "tests/tsconfig.consumer.json"], {
+  cwd: root,
+  encoding: "utf8"
+});
+
+if (types.status !== 0) {
+  process.stderr.write(types.stderr || types.stdout);
+  process.exit(types.status ?? 1);
+}
+
+console.log(`checked ${checks.length} JavaScript files and strict TypeScript consumer declarations`);

@@ -4,6 +4,8 @@ const packageInputs = [
   "src/**/*.js",
   "src/**/*.d.ts",
   "tests/**/*.test.js",
+  "tests/**/*.ts",
+  "tests/**/*.json",
   "scripts/**/*.js",
   "README.md",
   "docs/**/*.md",

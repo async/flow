@@ -1,4 +1,4 @@
-import { AVAILABILITY, COMPOSE_BATCH, GUARD } from "./protocol.js";
+import { AVAILABILITY, COMPOSE_BATCH, GUARD, TRANSITION } from "./protocol.js";
 
 const COMPOSE_STOP = Symbol("async.flow.compose.stop");
 
@@ -17,7 +17,7 @@ export function compose(stepOrSteps) {
     return runSteps(steps, this, store, input, undefined);
   };
 
-  liftLeadingAvailability(steps, composed);
+  liftFlowMetadata(steps, composed);
   return composed;
 }
 
@@ -29,13 +29,23 @@ export function parallel(branches) {
     const results = [];
     let hasAsync = false;
 
-    for (const branch of normalized) {
-      const result = branch.call(receiver, store, input, previous);
-      results.push(result);
+    try {
+      for (const branch of normalized) {
+        const result = branch.call(receiver, store, input, previous);
+        results.push(result);
 
-      if (isPromiseLike(result)) {
-        hasAsync = true;
+        if (isPromiseLike(result)) {
+          hasAsync = true;
+        }
       }
+    } catch (error) {
+      for (const result of results) {
+        if (isPromiseLike(result)) {
+          Promise.resolve(result).catch(() => {});
+        }
+      }
+
+      throw error;
     }
 
     if (!hasAsync) {
@@ -246,6 +256,28 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function liftFlowMetadata(steps, target) {
+  liftSingleMetadata(steps, target, TRANSITION);
+
+  if (!liftLeadingAvailability(steps, target)) {
+    liftSingleMetadata(steps, target, GUARD);
+  }
+}
+
+function liftSingleMetadata(steps, target, symbol) {
+  const matches = steps.filter((step) => step?.[symbol]);
+
+  if (matches.length !== 1) {
+    return false;
+  }
+
+  Object.defineProperty(target, symbol, {
+    configurable: true,
+    value: matches[0][symbol]
+  });
+  return true;
+}
+
 function liftLeadingAvailability(steps, target) {
   const gates = [];
 
@@ -258,7 +290,7 @@ function liftLeadingAvailability(steps, target) {
   }
 
   if (gates.length === 0) {
-    return;
+    return false;
   }
 
   const metadata = firstPublicMetadata(gates);
@@ -275,6 +307,7 @@ function liftLeadingAvailability(steps, target) {
       ...metadata
     }
   });
+  return true;
 }
 
 function explainAvailability(gates, receiver, store, input, previous) {

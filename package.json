@@ -1,6 +1,6 @@
 {
   "name": "@async/flow",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Portable store, async signal, and handler runtime for Async packages.",
   "license": "MIT",
   "type": "module",
@@ -125,6 +125,7 @@
   },
   "sideEffects": false,
   "devDependencies": {
-    "@async/pipeline": "0.9.30"
+    "@async/pipeline": "0.9.30",
+    "typescript": "5.9.3"
   }
 }

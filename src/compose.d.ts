@@ -2,13 +2,13 @@ export { COMPOSE_BATCH } from "./protocol.js";
 
 export type MaybePromise<T> = T | PromiseLike<T>;
 export type Step<TStore = Record<string, unknown>, TInput = unknown, TResult = unknown> = (
-  this: unknown,
+  this: any,
   store: TStore,
   input: TInput,
-  previous: unknown
+  previous?: unknown
 ) => MaybePromise<TResult | void>;
 export type ComposedHandler<TStore = Record<string, unknown>, TInput = unknown, TResult = unknown> = (
-  this: unknown,
+  this: any,
   store: TStore,
   input: TInput
 ) => MaybePromise<TResult | void>;

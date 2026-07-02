@@ -82,7 +82,7 @@ test("async steps switch remaining execution to a promise-like result", async ()
   assert.deepEqual(order, ["first", "second", "third"]);
 });
 
-test("Flow compose continuations resume in a fresh batched segment after async boundaries", async () => {
+test("Flow compose continuations publish one dispatch batch after async boundaries", async () => {
   const changes = [];
   const checkout = flow({
     store: {
@@ -107,30 +107,11 @@ test("Flow compose continuations resume in a fresh batched segment after async b
   checkout.subscribe((change) => changes.push(change));
   const pending = checkout.dispatch("submit", { orderId: "ord_123" });
 
-  assert.deepEqual(changes, [
-    {
-      name: "submit",
-      input: { orderId: "ord_123" },
-      store: {
-        loading: true,
-        orderId: null,
-        complete: false
-      }
-    }
-  ]);
+  assert.deepEqual(changes, []);
 
   await pending;
 
   assert.deepEqual(changes, [
-    {
-      name: "submit",
-      input: { orderId: "ord_123" },
-      store: {
-        loading: true,
-        orderId: null,
-        complete: false
-      }
-    },
     {
       name: "submit",
       input: { orderId: "ord_123" },
@@ -264,6 +245,20 @@ test("parallel validates branches and works with onError", async () => {
 
   await checkout.refresh();
   assert.equal(checkout.store.error, "refresh failed");
+});
+
+test("parallel sinks started branch rejections when a later branch throws synchronously", async () => {
+  const started = deferred();
+  const step = parallel([
+    () => started.promise,
+    () => {
+      throw new Error("sync branch failed");
+    }
+  ]);
+
+  assert.throws(() => step({}, {}), /sync branch failed/);
+  started.reject(new Error("late branch failed"));
+  await delay(0);
 });
 
 test("remember captures changed sources after successful scoped work", () => {
@@ -461,3 +456,18 @@ test("remember writes after async success and composes with guard parallel and o
   assert.equal(checkout.store.cartLoaded, true);
   assert.equal(checkout.store.error, null);
 });
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

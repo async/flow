@@ -7,13 +7,27 @@ export function createDefaultScheduler() {
   let queue = [];
 
   function drain() {
+    const errors = [];
+
     while (queue.length > 0) {
       const jobs = queue;
       queue = [];
 
       for (const job of jobs) {
-        job();
+        try {
+          job();
+        } catch (error) {
+          errors.push(error);
+        }
       }
+    }
+
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+
+    if (errors.length > 1) {
+      throw new AggregateError(errors, "Flow scheduler jobs failed.");
     }
   }
 

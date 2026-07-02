@@ -112,7 +112,9 @@ export type FlowInspection =
       event: string;
       payload: boolean;
     };
+export function set(name: string, value: FlowStepResolver): FlowHandler;
 export function set(name: string, value: FlowStepValue): FlowHandler;
+export function set(ref: Signal<unknown> | Status<unknown>, value: FlowStepResolver): FlowHandler;
 export function set(ref: Signal<unknown> | Status<unknown>, value: FlowStepValue): FlowHandler;
 export function set(updates: Record<string, FlowStepValue>): FlowHandler;
 export function dispatch(eventName: string, payload?: FlowStepValue): StandaloneDispatch;

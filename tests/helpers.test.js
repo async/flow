@@ -97,6 +97,47 @@ test("after schedules a later Flow event with derived input", async () => {
   });
 });
 
+test("standalone after registers cleanup without replacing compose previous", async () => {
+  const checkout = flow({
+    store: {
+      ran: false,
+      previous: null
+    },
+    on: {
+      schedule: compose([
+        () => "seed",
+        after(20, function markRan() {
+          this.store.ran = true;
+        }),
+        (store, _input, previous) => {
+          store.previous = previous;
+        }
+      ])
+    }
+  });
+
+  checkout.schedule();
+  checkout.destroy();
+  await delay(30);
+
+  assert.equal(checkout.get("ran"), false);
+  assert.equal(checkout.get("previous"), "seed");
+});
+
+test("standalone after contains async task failures", async () => {
+  const checkout = flow({
+    store: {},
+    on: {
+      schedule: after(0, async () => {
+        throw new Error("after failed");
+      })
+    }
+  });
+
+  checkout.schedule();
+  await delay(10);
+});
+
 test("dispatch helper forwards to another Flow event", () => {
   const checkout = flow({
     store: {
@@ -290,3 +331,7 @@ test("onError maps sync throws and async rejections to store updates", async () 
   await checkout.asyncFailure();
   assert.equal(checkout.store.error, "async failed");
 });
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

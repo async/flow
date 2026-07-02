@@ -477,6 +477,18 @@ Protocol symbols live in a tiny shared subpath:
 import { FLOW_INSPECT, ASYNC_SIGNAL } from "@async/flow/protocol";
 ```
 
+Definition helpers, runtime primitives, composition primitives, and scheduler
+controls are also available as narrow subpaths:
+
+```js
+import { defineFlow, defineSignal } from "@async/flow/define";
+import { createFlow } from "@async/flow/runtime";
+import { compose, parallel, remember } from "@async/flow/compose";
+import { set, update, when } from "@async/flow/helpers";
+import { asyncSignal, createAsyncSignal } from "@async/flow/async-signal";
+import { createDefaultScheduler } from "@async/flow/scheduler";
+```
+
 Framework integrations that provide their own scheduler can use the
 scheduler-free runtime and helper subpaths:
 
@@ -484,6 +496,9 @@ scheduler-free runtime and helper subpaths:
 import { createFlow } from "@async/flow/framework-runtime";
 import { set, update, when, onError } from "@async/flow/helpers/core";
 ```
+
+The `@async/flow/steps` subpath mirrors the step helpers for consumers that want
+a step-oriented import name.
 
 Builder helpers also live in an opt-in subpath. Use them when a graph
 declaration should compile into ordinary Flow config while implementation

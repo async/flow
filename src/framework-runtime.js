@@ -113,11 +113,15 @@ export function createSignal(initial, options = {}) {
     notifyScheduled = true;
     const enqueue = scheduler.enqueue ?? ((fn) => fn());
     enqueue(() => {
-      notifyScheduled = false;
-      const current = value;
+      try {
+        notifyScheduled = false;
+        const current = value;
 
-      for (const subscriber of [...subscribers]) {
-        subscriber(current);
+        for (const subscriber of [...subscribers]) {
+          subscriber(current);
+        }
+      } finally {
+        notifyScheduled = false;
       }
     });
   }
@@ -246,11 +250,15 @@ export function createComputed(optionsOrCompute, maybeCompute, maybeRuntimeOptio
     notifyScheduled = true;
     const enqueue = scheduler.enqueue ?? ((fn) => fn());
     enqueue(() => {
-      notifyScheduled = false;
-      const current = value;
+      try {
+        notifyScheduled = false;
+        const current = value;
 
-      for (const subscriber of [...subscribers]) {
-        subscriber(current);
+        for (const subscriber of [...subscribers]) {
+          subscriber(current);
+        }
+      } finally {
+        notifyScheduled = false;
       }
     });
   }
@@ -386,6 +394,10 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
 
     restore(snapshot) {
       if (isPlainObject(snapshot) && Object.hasOwn(snapshot, "value")) {
+        if (currentRun) {
+          cancelCurrentRun();
+        }
+
         value = snapshot.value;
         hasValue = snapshot.status === "ready" || snapshot.value !== undefined;
         error = snapshot.error;
@@ -404,7 +416,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
       refs = nextRefs;
       asyncSignals = nextAsyncSignals;
       if (runtimeOptions.deferImmediate === true && options.immediate === true) {
-        asyncSignalRef.load();
+        sinkAsyncSignalRun(asyncSignalRef.load());
       }
     }
   };
@@ -418,7 +430,7 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
   }
 
   if (options.immediate === true && runtimeOptions.deferImmediate !== true) {
-    asyncSignalRef.load();
+    sinkAsyncSignalRun(asyncSignalRef.load());
   }
 
   return asyncSignalRef;
@@ -481,6 +493,8 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
     const run = currentRun;
     currentRun = undefined;
 
+    run?.promise?.catch(() => {});
+
     if (run && !run.controller.signal.aborted) {
       run.controller.abort(reason);
     }
@@ -508,6 +522,12 @@ export function createAsyncSignal(optionsOrLoader, maybeLoader, maybeRuntimeOpti
         subscriber(value);
       }
     });
+  }
+}
+
+function sinkAsyncSignalRun(result) {
+  if (isPromiseLike(result)) {
+    Promise.resolve(result).catch(() => {});
   }
 }
 
@@ -656,6 +676,8 @@ export function createFlow(definitionOrConfig, options = {}) {
   const guardMetadata = new Map();
   const wholeSubscribers = new Set();
   const refStops = [];
+  const subscriberStops = [];
+  const suppressedSnapshots = [];
   const cleanups = new Set();
   let activeBatch = null;
   let destroyed = false;
@@ -682,11 +704,20 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   });
   const { store, refs, asyncSignals, internal, writableNames, statusNames } = storeState;
-
-  flow = {
+  const publicViews = createFlowViews({
     store,
     refs,
     asyncSignals,
+    internal,
+    assertAlive,
+    mutate: (fn) => runFlowBatch(undefined, undefined, fn),
+    trackStop: trackSubscriberStop
+  });
+
+  flow = {
+    store: publicViews.store,
+    refs: publicViews.refs,
+    asyncSignals: publicViews.asyncSignals,
     handlers,
 
     get(name) {
@@ -695,6 +726,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     },
 
     set(name, value) {
+      assertAlive();
       assertWritable(refs, writableNames, name);
       return runFlowBatch(undefined, undefined, () => {
         store[name] = value;
@@ -703,6 +735,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     },
 
     update(name, fn) {
+      assertAlive();
       assertWritable(refs, writableNames, name);
       if (typeof fn !== "function") {
         throw new TypeError("Flow update(...) requires an updater function.");
@@ -715,6 +748,7 @@ export function createFlow(definitionOrConfig, options = {}) {
     },
 
     subscribe(nameOrFn, maybeFn) {
+      assertAlive();
       if (typeof nameOrFn === "function") {
         wholeSubscribers.add(nameOrFn);
         return () => wholeSubscribers.delete(nameOrFn);
@@ -724,37 +758,18 @@ export function createFlow(definitionOrConfig, options = {}) {
       if (!refs[nameOrFn]) {
         throw new Error(`Flow store value "${nameOrFn}" is not subscribable.`);
       }
-      return refs[nameOrFn].subscribe(maybeFn);
+      return publicViews.refs[nameOrFn].subscribe(maybeFn);
     },
 
     dispatch(name, input) {
-      if (destroyed) {
-        throw new Error("Flow instance has been destroyed.");
-      }
+      assertAlive();
 
       const handler = rawHandlers[name];
       if (typeof handler !== "function") {
         throw new Error(`Unknown Flow handler "${name}".`);
       }
 
-      const receiver = createHandlerReceiver(name, input);
-      const result = runFlowBatch(name, input, () => {
-        const next = handler.call(receiver, store, input);
-
-        if (isPromiseLike(next)) {
-          return next;
-        }
-
-        return applyHandlerResult(next);
-      });
-
-      if (isPromiseLike(result)) {
-        return Promise.resolve(result).then((next) =>
-          runFlowBatch(name, input, () => applyHandlerResult(next))
-        );
-      }
-
-      return result;
+      return runDispatchBatch(name, input, handler);
     },
 
     explain(eventName, input) {
@@ -766,10 +781,15 @@ export function createFlow(definitionOrConfig, options = {}) {
     },
 
     restore(snapshot) {
+      assertAlive();
       runFlowBatch(undefined, undefined, () => storeState.restore(snapshot));
     },
 
     destroy() {
+      if (destroyed) {
+        return;
+      }
+
       destroyed = true;
 
       for (const cleanup of [...cleanups]) {
@@ -777,8 +797,16 @@ export function createFlow(definitionOrConfig, options = {}) {
       }
       cleanups.clear();
 
+      for (const stop of subscriberStops.splice(0)) {
+        stop();
+      }
+
       for (const stop of refStops.splice(0)) {
         stop();
+      }
+
+      for (const asyncSignalRef of Object.values(asyncSignals)) {
+        asyncSignalRef.cancel?.(new Error("Flow instance has been destroyed."));
       }
 
       wholeSubscribers.clear();
@@ -788,7 +816,7 @@ export function createFlow(definitionOrConfig, options = {}) {
   Object.defineProperty(flow, "_", {
     configurable: false,
     enumerable: false,
-    value: internal,
+    value: publicViews.internal,
     writable: false
   });
 
@@ -863,30 +891,63 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   }
 
-  function createHandlerReceiver(name, input) {
+  function assertAlive() {
+    if (destroyed) {
+      throw new Error("Flow instance has been destroyed.");
+    }
+  }
+
+  function trackSubscriberStop(stop) {
+    subscriberStops.push(stop);
+    return () => {
+      const index = subscriberStops.indexOf(stop);
+      if (index !== -1) {
+        subscriberStops.splice(index, 1);
+      }
+      stop();
+    };
+  }
+
+  function createHandlerReceiver(name, input, batch, views) {
     const receiver = {
       [FLOW_INSTANCE]: true,
       [FLOW_INSPECT]: describeFlow,
-      store,
-      refs,
-      asyncSignals,
+      store: views.store,
+      refs: views.refs,
+      asyncSignals: views.asyncSignals,
       dispatch: flow.dispatch.bind(flow),
       explain: flow.explain.bind(flow),
       [COMPOSE_BATCH](fn) {
-        return runFlowBatch(name, input, fn);
+        return runInBatch(batch, fn);
       },
       after(ms, eventName, nextInput) {
+        assertAlive();
         if (!Number.isFinite(ms) || ms < 0) {
           throw new TypeError("after(...) requires a non-negative millisecond delay.");
         }
         if (typeof eventName !== "string" || eventName.length === 0) {
           throw new TypeError("after(...) requires an event name.");
         }
+        if (typeof rawHandlers[eventName] !== "function") {
+          throw new Error(`Unknown Flow handler "${eventName}".`);
+        }
 
         const id = ++timeoutId;
         const timeout = setTimeout(() => {
           cleanups.delete(cleanup);
-          flow.dispatch(eventName, nextInput);
+          if (destroyed) {
+            return;
+          }
+
+          try {
+            const result = flow.dispatch(eventName, nextInput);
+
+            if (isPromiseLike(result)) {
+              Promise.resolve(result).catch(() => {});
+            }
+          } catch {
+            // Timer-driven dispatches cannot report back to a caller.
+          }
         }, ms);
         const cleanup = () => clearTimeout(timeout);
         cleanups.add(cleanup);
@@ -904,7 +965,7 @@ export function createFlow(definitionOrConfig, options = {}) {
 
     const extra = resolveRuntimeContext(runtimeOptions.context, {
       flow,
-      store,
+      store: views.store,
       input
     });
 
@@ -1156,41 +1217,164 @@ export function createFlow(definitionOrConfig, options = {}) {
   }
 
   function runFlowBatch(name, input, fn) {
-    const previousBatch = activeBatch;
-    const batch = {
-      name,
-      input,
-      changed: false
-    };
-    activeBatch = batch;
+    let result;
+    const batch = createBatch(name, input);
+    try {
+      result = runInBatch(batch, fn);
+    } catch (error) {
+      finishBatch(batch);
+      throw error;
+    }
+
+    finishBatch(batch);
+
+    return result;
+  }
+
+  function runDispatchBatch(name, input, handler) {
+    const batch = createBatch(name, input);
+    const views = createFlowViews({
+      store,
+      refs,
+      asyncSignals,
+      internal,
+      assertAlive,
+      mutate: (fn) => runMutationInBatch(batch, fn),
+      trackStop: trackSubscriberStop
+    });
+    const receiver = createHandlerReceiver(name, input, batch, views);
 
     let result;
     try {
-      result = scheduler.batch(fn);
+      result = runInBatch(batch, () => {
+        const next = handler.call(receiver, views.store, input);
+
+        if (isPromiseLike(next)) {
+          return next;
+        }
+
+        return applyHandlerResult(next, views.store);
+      });
+    } catch (error) {
+      finishBatch(batch);
+      throw error;
+    }
+
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).then(
+        (next) => {
+          let applied;
+          try {
+            applied = runInBatch(batch, () => applyHandlerResult(next, views.store));
+          } catch (error) {
+            finishBatch(batch);
+            throw error;
+          }
+          finishBatch(batch);
+          return applied;
+        },
+        (error) => {
+          finishBatch(batch);
+          throw error;
+        }
+      );
+    }
+
+    finishBatch(batch);
+    return result;
+  }
+
+  function createBatch(name, input) {
+    return {
+      name,
+      input,
+      changed: false,
+      closed: false,
+      mutationCount: 0,
+      recordCount: 0,
+      startSnapshot: storeState.snapshot()
+    };
+  }
+
+  function runInBatch(batch, fn) {
+    assertAlive();
+    if (activeBatch === batch) {
+      return fn();
+    }
+
+    if (batch.closed) {
+      return scheduler.batch(fn);
+    }
+
+    const previousBatch = activeBatch;
+    activeBatch = batch;
+    try {
+      return scheduler.batch(fn);
     } finally {
       activeBatch = previousBatch;
     }
+  }
 
-    if (batch.changed) {
+  function runMutationInBatch(batch, fn) {
+    const result = runInBatch(batch, fn);
+    if (!batch.closed) {
+      batch.changed = true;
+      batch.mutationCount += 1;
+    }
+    return result;
+  }
+
+  function finishBatch(batch) {
+    if (batch.closed) {
+      return;
+    }
+    batch.closed = true;
+
+    if (batch.changed && !destroyed) {
+      const snapshot = storeState.snapshot();
+      const remainingRecords = Math.max(
+        1,
+        batch.mutationCount,
+        countSnapshotChanges(batch.startSnapshot, snapshot)
+      ) - batch.recordCount;
+      if (remainingRecords > 0) {
+        suppressedSnapshots.push({
+          snapshot,
+          remaining: remainingRecords
+        });
+      }
       notifyWholeSubscribers({
-        name,
-        input,
-        store: storeState.snapshot()
+        name: batch.name,
+        input: batch.input,
+        store: snapshot
       });
     }
-
-    return result;
   }
 
   function recordChange() {
     if (activeBatch) {
       activeBatch.changed = true;
+      activeBatch.recordCount += 1;
+      return;
+    }
+
+    const snapshot = storeState.snapshot();
+    const suppressed = findSuppressedSnapshot(snapshot);
+    if (suppressed) {
+      suppressed.remaining -= 1;
+      if (suppressed.remaining <= 0) {
+        suppressedSnapshots.splice(suppressedSnapshots.indexOf(suppressed), 1);
+      }
       return;
     }
 
     notifyWholeSubscribers({
-      store: storeState.snapshot()
+      store: snapshot
     });
+  }
+
+  function findSuppressedSnapshot(snapshot) {
+    return suppressedSnapshots.find((entry) => areSnapshotsEqual(entry.snapshot, snapshot));
   }
 
   function notifyWholeSubscribers(change) {
@@ -1199,24 +1383,194 @@ export function createFlow(definitionOrConfig, options = {}) {
     }
   }
 
-  function applyHandlerResult(result) {
+  function applyHandlerResult(result, targetStore = store) {
     if (!isPlainObject(result)) {
       return result;
     }
 
-    return applyStoreUpdates(result);
+    return applyStoreUpdates(result, targetStore);
   }
 
-  function applyStoreUpdates(updates) {
+  function applyStoreUpdates(updates, targetStore = store) {
     for (const [name, value] of Object.entries(updates)) {
       assertWritable(refs, writableNames, name);
-      store[name] = value;
+      targetStore[name] = value;
     }
 
     return updates;
   }
 
   return flow;
+}
+
+function createFlowViews({ store, refs, asyncSignals, internal, assertAlive, mutate, trackStop }) {
+  const refCache = new Map();
+  const viewOptions = { assertAlive, mutate, trackStop };
+  const publicRefs = createRefViewNamespace(refs, viewOptions, refCache);
+  const publicAsyncSignals = createRefViewNamespace(asyncSignals, viewOptions, refCache);
+  const publicStore = createStoreMutationView(store, publicRefs, publicAsyncSignals, {
+    assertAlive,
+    mutate
+  });
+  const publicInternal = createInternalStoreMutationView(internal, publicRefs, publicAsyncSignals);
+
+  return {
+    store: publicStore,
+    refs: publicRefs,
+    asyncSignals: publicAsyncSignals,
+    internal: publicInternal
+  };
+}
+
+function createRefViewNamespace(entries, options, cache) {
+  const namespace = {};
+
+  for (const [name, ref] of Object.entries(entries)) {
+    namespace[name] = createRefMutationView(ref, options, cache);
+  }
+
+  return namespace;
+}
+
+function createRefMutationView(ref, options, cache) {
+  if (cache.has(ref)) {
+    return cache.get(ref);
+  }
+
+  const view = new Proxy(ref, {
+    get(target, prop, receiver) {
+      if (prop === "subscribe") {
+        return (fn) => {
+          options.assertAlive();
+          const stop = target.subscribe(fn);
+          return options.trackStop(stop);
+        };
+      }
+
+      if (isRefMutationMethod(prop)) {
+        return (...args) => {
+          options.assertAlive();
+          return options.mutate(() => target[prop](...args));
+        };
+      }
+
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+
+    set(target, prop, value, receiver) {
+      options.assertAlive();
+      return options.mutate(() => Reflect.set(target, prop, value, receiver));
+    }
+  });
+
+  cache.set(ref, view);
+  return view;
+}
+
+function createStoreMutationView(store, refs, asyncSignals, options) {
+  return new Proxy(store, {
+    get(target, prop, receiver) {
+      if (typeof prop !== "symbol" && isInternalStoreName(prop)) {
+        return refs[prop] ?? asyncSignals[prop] ?? Reflect.get(target, prop, receiver);
+      }
+
+      return Reflect.get(target, prop, receiver);
+    },
+
+    set(target, prop, value, receiver) {
+      options.assertAlive();
+      return options.mutate(() => Reflect.set(target, prop, value, receiver));
+    },
+
+    deleteProperty() {
+      options.assertAlive();
+      return false;
+    }
+  });
+}
+
+function createInternalStoreMutationView(internal, refs, asyncSignals) {
+  const namespace = {};
+
+  for (const name of Object.keys(internal)) {
+    const ref = refs[name] ?? asyncSignals[name];
+
+    if (ref) {
+      Object.defineProperty(namespace, name, {
+        configurable: false,
+        enumerable: true,
+        value: ref,
+        writable: false
+      });
+      continue;
+    }
+
+    Object.defineProperty(namespace, name, {
+      configurable: false,
+      enumerable: true,
+      get() {
+        return internal[name];
+      }
+    });
+  }
+
+  return Object.freeze(namespace);
+}
+
+function isRefMutationMethod(prop) {
+  return (
+    prop === "set" ||
+    prop === "update" ||
+    prop === "restore" ||
+    prop === "load" ||
+    prop === "reload" ||
+    prop === "cancel"
+  );
+}
+
+function countSnapshotChanges(before, after) {
+  const keys = new Set([
+    ...Object.keys(before ?? {}),
+    ...Object.keys(after ?? {})
+  ]);
+  let changes = 0;
+
+  for (const key of keys) {
+    if (!areSnapshotsEqual(before?.[key], after?.[key])) {
+      changes += 1;
+    }
+  }
+
+  return changes;
+}
+
+function areSnapshotsEqual(left, right) {
+  if (Object.is(left, right)) {
+    return true;
+  }
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((value, index) => areSnapshotsEqual(value, right[index]));
+  }
+
+  if (!isPlainObject(left) || !isPlainObject(right)) {
+    return false;
+  }
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  return leftKeys.every((key) =>
+    Object.hasOwn(right, key) && areSnapshotsEqual(left[key], right[key])
+  );
 }
 
 function createWritableRefForDeclaration(name, declaration, scheduler) {
@@ -1228,10 +1582,7 @@ function createWritableRefForDeclaration(name, declaration, scheduler) {
   }
 
   if (isStatusLike(declaration)) {
-    return createStatus(declaration.get(), declaration.allowed, {
-      name,
-      scheduler
-    });
+    return declaration;
   }
 
   if (isSignalDefinition(declaration)) {
@@ -1239,7 +1590,7 @@ function createWritableRefForDeclaration(name, declaration, scheduler) {
   }
 
   if (isSignalLike(declaration)) {
-    return createSignal(declaration.get(), { scheduler });
+    return declaration;
   }
 
   return createSignal(declaration, { scheduler });
